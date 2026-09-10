@@ -209,10 +209,10 @@ bot.hears("👨‍💼 آقای محمدی", (ctx) => {
 `👨‍💼 *آقای محمدی*
 
 📞 شماره تماس:
-09123456789
+09058531174
 
 💬 آیدی تلگرام:
-@MohammadiTAK`,
+@Mohammadi_Tak`,
     { parse_mode: "Markdown" }
   );
 });
@@ -223,10 +223,10 @@ bot.hears("👩‍💼 خانم حسین‌زاده", (ctx) => {
 `👩‍💼 *خانم حسین‌زاده*
 
 📞 شماره تماس:
-09351234567
+09058531170
 
 💬 آیدی تلگرام:
-@HosseinzadehTAK`,
+@Hosseinzadeh_TAK`,
     { parse_mode: "Markdown" }
   );
 });
@@ -240,7 +240,7 @@ bot.hears("🛡 مسئول گارانتی", (ctx) => {
 09058531174
 
 💬 آیدی تلگرام:
-@TakorgWarranty`,
+@Mohammadi_Tak`,
     { parse_mode: "Markdown" }
   );
 });
