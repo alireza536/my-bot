@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const { Telegraf, Markup } = require("telegraf");
@@ -36,13 +35,8 @@ function getSession(userId) {
 function getCategoryEmoji(name) {
   const text = String(name || "").toLowerCase();
 
-  if (
-    text.includes("ساعت") ||
-    text.includes("واچ") ||
-    text.includes("watch")
-  ) {
+  if (text.includes("ساعت") || text.includes("واچ") || text.includes("watch"))
     return "⌚";
-  }
 
   if (
     text.includes("هدفون") ||
@@ -50,114 +44,61 @@ function getCategoryEmoji(name) {
     text.includes("ایرپاد") ||
     text.includes("headphone") ||
     text.includes("earphone")
-  ) {
+  )
     return "🎧";
-  }
 
-  if (
-    text.includes("اسپیکر") ||
-    text.includes("speaker")
-  ) {
-    return "🔊";
-  }
+  if (text.includes("اسپیکر") || text.includes("speaker")) return "🔊";
 
   if (
     text.includes("موبایل") ||
     text.includes("گوشی") ||
     text.includes("phone")
-  ) {
+  )
     return "📱";
-  }
 
   if (
     text.includes("لپ تاپ") ||
     text.includes("لپ‌تاپ") ||
-    text.includes("لپتاب") ||
     text.includes("laptop")
-  ) {
+  )
     return "💻";
-  }
 
-  if (
-    text.includes("کامپیوتر") ||
-    text.includes("computer")
-  ) {
-    return "🖥️";
-  }
+  if (text.includes("کامپیوتر") || text.includes("computer")) return "🖥️";
 
-  if (
-    text.includes("مانیتور") ||
-    text.includes("monitor")
-  ) {
-    return "🖥️";
-  }
+  if (text.includes("مانیتور") || text.includes("monitor")) return "🖥️";
 
-  if (
-    text.includes("کیبورد") ||
-    text.includes("keyboard")
-  ) {
-    return "⌨️";
-  }
+  if (text.includes("کیبورد") || text.includes("keyboard")) return "⌨️";
 
   if (
     text.includes("ماوس") ||
     text.includes("موس") ||
     text.includes("mouse")
-  ) {
+  )
     return "🖱️";
-  }
 
-  if (
-    text.includes("کابل") ||
-    text.includes("cable")
-  ) {
-    return "🔌";
-  }
+  if (text.includes("کابل") || text.includes("cable")) return "🔌";
 
   if (
     text.includes("شارژر") ||
     text.includes("شارژ") ||
     text.includes("charger")
-  ) {
+  )
     return "🔋";
-  }
 
-  if (
-    text.includes("فلش") ||
-    text.includes("flash")
-  ) {
-    return "💾";
-  }
+  if (text.includes("پاوربانک") || text.includes("powerbank")) return "🔋";
 
-  if (
-    text.includes("دوربین") ||
-    text.includes("camera")
-  ) {
-    return "📷";
-  }
+  if (text.includes("فلش") || text.includes("flash")) return "💾";
 
-  if (
-    text.includes("تلویزیون") ||
-    text.includes("tv")
-  ) {
-    return "📺";
-  }
+  if (text.includes("دوربین") || text.includes("camera")) return "📷";
+
+  if (text.includes("تلویزیون") || text.includes("tv")) return "📺";
 
   if (
     text.includes("گیم") ||
     text.includes("بازی") ||
     text.includes("game")
-  ) {
+  )
     return "🎮";
-  }
-
-  if (
-    text.includes("لوازم جانبی") ||
-    text.includes("اکسسوری") ||
-    text.includes("accessories")
-  ) {
-    return "🧩";
-  }
 
   return "📦";
 }
@@ -182,13 +123,9 @@ function cleanHtml(text) {
 function makeShortDescription(text, maxLength = 180) {
   const cleanText = cleanHtml(text);
 
-  if (!cleanText) {
-    return "";
-  }
+  if (!cleanText) return "";
 
-  if (cleanText.length <= maxLength) {
-    return cleanText;
-  }
+  if (cleanText.length <= maxLength) return cleanText;
 
   return cleanText.substring(0, maxLength) + "...";
 }
@@ -203,8 +140,7 @@ async function showMainMenu(ctx) {
   session.categories = new Map();
 
   await ctx.reply(
-    "🛍 *به فروشگاه TAKORG خوش آمدید*\n\n" +
-    "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
+    "🛍 *به فروشگاه TAKORG خوش آمدید*\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
     {
       parse_mode: "Markdown",
       ...Markup.keyboard([
@@ -226,9 +162,9 @@ bot.start(async (ctx) => {
     console.error("خطا در /start:", error.message);
   }
 });
-
 // ===============================
-// مشاهده محصولات
+// مشاهده محصولات (دسته‌بندی‌های ووکامرس)
+// فقط زیر دسته‌ها نمایش داده می‌شوند
 // ===============================
 bot.hears("🛍 مشاهده محصولات", async (ctx) => {
   try {
@@ -237,26 +173,21 @@ bot.hears("🛍 مشاهده محصولات", async (ctx) => {
     session.searchMode = false;
     session.categories = new Map();
 
-    await ctx.reply("⏳ در حال دریافت دسته‌بندی‌ها...");
+    await ctx.reply("⏳ در حال دریافت دسته‌بندی‌های فروشگاه...");
 
-    const categories = await getCategories();
+    // فقط زیر دسته‌ها
+    const categories = (await getCategories()).filter(cat => cat.parent !== 0);
 
-    if (!categories || categories.length === 0) {
-      return ctx.reply(
-        "❌ هیچ دسته‌بندی نهایی‌ای در فروشگاه پیدا نشد."
-      );
+    if (!categories.length) {
+      return ctx.reply("❌ هیچ دسته‌بندی‌ای پیدا نشد.");
     }
 
     const buttons = [];
 
     for (const category of categories) {
-      const buttonText =
-        `${getCategoryEmoji(category.name)} ${category.name}`;
+      const buttonText = `${getCategoryEmoji(category.name)} ${category.name}`;
 
-      session.categories.set(
-        buttonText,
-        category.id
-      );
+      session.categories.set(buttonText, category.id);
 
       buttons.push([buttonText]);
     }
@@ -264,55 +195,37 @@ bot.hears("🛍 مشاهده محصولات", async (ctx) => {
     buttons.push(["🔙 بازگشت به منوی اصلی"]);
 
     await ctx.reply(
-      "🛍 *دسته‌بندی محصولات*\n\n" +
-      "دسته موردنظر خود را انتخاب کنید:",
+      "📂 *دسته‌بندی محصولات*\n\nلطفاً دسته موردنظر را انتخاب کنید:",
       {
         parse_mode: "Markdown",
         ...Markup.keyboard(buttons).resize(),
       }
     );
-
   } catch (error) {
-    console.error(
-      "خطا در دریافت دسته‌بندی:",
-      error.response?.data || error.message
-    );
+    console.error(error.response?.data || error.message);
 
-    await ctx.reply(
-      "❌ نتوانستم دسته‌بندی‌های فروشگاه را دریافت کنم."
-    );
+    ctx.reply("❌ خطا در دریافت دسته‌بندی‌های فروشگاه.");
   }
 });
 
 // ===============================
-// نمایش محصولات یک دسته
+// دریافت محصولات یک دسته
 // ===============================
 async function showCategoryProducts(ctx, categoryId) {
   try {
-    await ctx.reply(
-      "⏳ در حال دریافت محصولات..."
-    );
+    await ctx.reply("⏳ در حال دریافت محصولات...");
 
-    const products =
-      await getProductsByCategory(categoryId);
+    const products = await getProductsByCategory(categoryId);
 
-    if (!products || products.length === 0) {
-      return ctx.reply(
-        "❌ در این دسته‌بندی محصول موجودی وجود ندارد."
-      );
+    if (!products.length) {
+      return ctx.reply("❌ در این دسته محصولی وجود ندارد.");
     }
 
     await sendProducts(ctx, products);
-
   } catch (error) {
-    console.error(
-      "خطا در دریافت محصولات:",
-      error.response?.data || error.message
-    );
+    console.error(error.response?.data || error.message);
 
-    await ctx.reply(
-      "❌ خطا در دریافت محصولات فروشگاه."
-    );
+    ctx.reply("❌ خطا در دریافت محصولات.");
   }
 }
 
@@ -320,261 +233,140 @@ async function showCategoryProducts(ctx, categoryId) {
 // ارسال محصولات
 // ===============================
 async function sendProducts(ctx, products) {
-  if (!products || products.length === 0) {
-    return ctx.reply(
-      "❌ محصولی پیدا نشد."
-    );
-  }
-
   for (const product of products) {
     try {
-      const productName =
-        cleanHtml(product.name);
+      const title = cleanHtml(product.name);
 
       const price =
         product.price && product.price !== "0"
-          ? `${product.price} تومان`
+          ? Number(product.price).toLocaleString("fa-IR") + " تومان"
           : "تماس بگیرید";
 
-      const description =
-        makeShortDescription(
-          product.short_description ||
-          product.description ||
-          "",
-          180
-        );
+      const description = makeShortDescription(
+        product.short_description || product.description || "",
+        180
+      );
 
       let caption =
-        `🛍 ${productName}\n\n` +
-        `💰 قیمت: ${price}`;
+        `🛍 *${title}*\n\n` +
+        `💰 *${price}*`;
 
       if (description) {
-        caption +=
-          `\n\n📝 ${description}`;
+        caption += `\n\n📝 ${description}`;
       }
 
-      // ===============================
-      // عکس‌های محصول
-      // ===============================
-      const images =
-        Array.isArray(product.images)
-          ? product.images
-              .filter(
-                (image) =>
-                  image &&
-                  image.src
-              )
-              .slice(0, 3)
-          : [];
+      // حداکثر ۵ عکس
+      const images = (product.images || [])
+        .filter(img => img && img.src)
+        .slice(0, 5);
 
-      // ===============================
-      // دکمه خرید
-      // ===============================
-      const buyKeyboard =
-        Markup.inlineKeyboard([
-          [
-            Markup.button.url(
-              "🛒 خرید از سایت",
-              product.permalink
-            ),
-          ],
-        ]);
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.url("🛒 خرید از سایت", product.permalink)],
+      ]);
 
-      // ===============================
-      // 3 عکس
-      // ===============================
-      if (images.length === 3) {
-        await ctx.replyWithMediaGroup([
-          {
+      // اگر عکس دارد
+      if (images.length > 0) {
+        await ctx.replyWithMediaGroup(
+          images.map((img, index) => ({
             type: "photo",
-            media: images[0].src,
-            caption: caption,
-          },
-          {
-            type: "photo",
-            media: images[1].src,
-          },
-          {
-            type: "photo",
-            media: images[2].src,
-          },
-        ]);
-
-        await ctx.reply(
-          "🛒 برای خرید این محصول:",
-          buyKeyboard
+            media: img.src,
+            caption: index === 0 ? caption : undefined,
+            parse_mode: "Markdown",
+          }))
         );
 
-        continue;
+        await ctx.reply("👇 برای خرید این محصول:", keyboard);
+      } else {
+        // اگر عکس نداشت
+        await ctx.reply(caption, {
+          parse_mode: "Markdown",
+          ...keyboard,
+        });
       }
-
-      // ===============================
-      // 2 عکس
-      // ===============================
-      if (images.length === 2) {
-        await ctx.replyWithMediaGroup([
-          {
-            type: "photo",
-            media: images[0].src,
-            caption: caption,
-          },
-          {
-            type: "photo",
-            media: images[1].src,
-          },
-        ]);
-
-        await ctx.reply(
-          "🛒 برای خرید این محصول:",
-          buyKeyboard
-        );
-
-        continue;
-      }
-
-      // ===============================
-      // 1 عکس
-      // ===============================
-      if (images.length === 1) {
-        await ctx.replyWithPhoto(
-          images[0].src,
-          {
-            caption: caption,
-            ...buyKeyboard,
-          }
-        );
-
-        continue;
-      }
-
-      // ===============================
-      // بدون عکس
-      // ===============================
-      await ctx.reply(
-        caption,
-        buyKeyboard
-      );
-
     } catch (error) {
-      console.error(
-        `خطا در ارسال محصول ${product.id}:`,
-        error.response?.data || error.message
-      );
+      console.error("خطا در ارسال محصول:", error.message);
     }
   }
 }
-
 // ===============================
 // جستجوی محصول
 // ===============================
 bot.hears("🔍 جستجوی محصول", async (ctx) => {
-  try {
-    const session = getSession(ctx.from.id);
+  const session = getSession(ctx.from.id);
 
-    session.searchMode = true;
+  session.searchMode = true;
 
-    await ctx.reply(
-      "🔎 *جستجوی محصول*\n\n" +
-      "نام محصول، برند یا مدل موردنظر را بنویسید.\n\n" +
-      "مثلاً:\n" +
-      "• اسپیکر\n" +
-      "• هدفون\n" +
-      "• JBL\n" +
-      "• AUX\n" +
-      "• کابل شارژ",
-      {
-        parse_mode: "Markdown",
-      }
-    );
-
-  } catch (error) {
-    console.error(
-      "خطا در فعال کردن جستجو:",
-      error.message
-    );
-  }
+  await ctx.reply(
+    "🔎 *جستجوی محصول*\n\n" +
+    "نام محصول، برند یا مدل را بنویسید.\n\n" +
+    "مثلاً:\n" +
+    "• اسپیکر JBL\n" +
+    "• ساعت هوشمند\n" +
+    "• کابل آیفون",
+    {
+      parse_mode: "Markdown",
+      ...Markup.keyboard([["🔙 بازگشت به منوی اصلی"]]).resize(),
+    }
+  );
 });
 
 // ===============================
-// پردازش متن کاربر
+// مدیریت تمام پیام‌های متنی
 // ===============================
 bot.on("text", async (ctx) => {
-  const text =
-    ctx.message.text.trim();
+  const text = ctx.message.text.trim();
+  const session = getSession(ctx.from.id);
 
-  const userId =
-    ctx.from.id;
+  // اگر دستور بود
+  if (text.startsWith("/")) return;
 
-  const session =
-    getSession(userId);
-
-  // ===============================
-  // دستورات
-  // ===============================
-  if (text.startsWith("/")) {
-    return;
-  }
-
-  // ===============================
-  // اگر کاربر در حالت جستجو است
-  // ===============================
+  // -------------------------------
+  // حالت جستجوی محصول
+  // -------------------------------
   if (session.searchMode) {
+    if (text === "🔙 بازگشت به منوی اصلی") {
+      session.searchMode = false;
+      return showMainMenu(ctx);
+    }
+
     try {
-      await ctx.reply(
-        "🔎 در حال جستجوی محصول..."
-      );
+      await ctx.reply("⏳ در حال جستجوی محصول...");
 
-      const products =
-        await searchProducts(text);
+      const products = await searchProducts(text);
 
-      if (!products || products.length === 0) {
+      if (!products.length) {
         return ctx.reply(
-          `❌ محصولی برای «${text}» پیدا نشد.\n\n` +
-          "نام محصول یا مدل را دقیق‌تر وارد کنید."
+          `❌ محصولی با عبارت «${text}» پیدا نشد.\n\nلطفاً نام یا مدل را دقیق‌تر وارد کنید.`
         );
       }
 
-      // بعد از جستجو همچنان در حالت جستجو می‌ماند
-      await sendProducts(
-        ctx,
-        products
-      );
+      session.searchMode = false;
+
+      await sendProducts(ctx, products);
 
     } catch (error) {
-      console.error(
-        "خطا در جستجو:",
-        error.response?.data || error.message
-      );
+      console.error(error.response?.data || error.message);
 
-      await ctx.reply(
-        "❌ هنگام جستجوی محصول خطایی رخ داد."
-      );
+      await ctx.reply("❌ خطا در جستجوی محصول.");
     }
 
     return;
   }
 
-  // ===============================
-  // بررسی دسته‌بندی
-  // ===============================
-  if (
-    session.categories &&
-    session.categories.has(text)
-  ) {
-    const categoryId =
-      session.categories.get(text);
+  // -------------------------------
+  // انتخاب دسته‌بندی
+  // -------------------------------
+  if (session.categories.has(text)) {
+    const categoryId = session.categories.get(text);
 
-    await showCategoryProducts(
-      ctx,
-      categoryId
-    );
+    await showCategoryProducts(ctx, categoryId);
 
     return;
   }
 
-  // ===============================
-  // اگر متن یکی از دکمه‌های اصلی بود
-  // ===============================
+  // -------------------------------
+  // دکمه‌های اصلی منو
+  // -------------------------------
   const menuButtons = [
     "🛍 مشاهده محصولات",
     "🔍 جستجوی محصول",
@@ -591,21 +383,20 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  // ===============================
-  // متن ناشناخته
-  // ===============================
+  // -------------------------------
+  // متن ناشناس
+  // -------------------------------
   await ctx.reply(
     "❓ لطفاً یکی از گزینه‌های منو را انتخاب کنید."
   );
 });
-
 // ===============================
 // سبد خرید
 // ===============================
 bot.hears("🛒 سبد خرید", async (ctx) => {
   await ctx.reply(
     "🛒 سبد خرید شما فعلاً خالی است.\n\n" +
-    "در نسخه بعدی مستقیماً به سبد خرید ووکامرس متصل می‌شود."
+    "در نسخه بعدی ربات به ووکامرس متصل می‌شود."
   );
 });
 
@@ -614,7 +405,7 @@ bot.hears("🛒 سبد خرید", async (ctx) => {
 // ===============================
 bot.hears("📦 سفارش‌های من", async (ctx) => {
   await ctx.reply(
-    "📦 در نسخه بعدی سفارش‌های واقعی ووکامرس شما اینجا نمایش داده می‌شود."
+    "📦 هنوز سفارشی برای حساب شما ثبت نشده است."
   );
 });
 
@@ -622,15 +413,8 @@ bot.hears("📦 سفارش‌های من", async (ctx) => {
 // پشتیبانی
 // ===============================
 bot.hears("📞 پشتیبانی", async (ctx) => {
-  const session =
-    getSession(ctx.from.id);
-
-  session.searchMode = false;
-  session.categories = new Map();
-
   await ctx.reply(
-    "📞 *بخش پشتیبانی TAKORG*\n\n" +
-    "لطفاً واحد موردنظر را انتخاب کنید:",
+    "📞 *واحد موردنظر را انتخاب کنید:*",
     {
       parse_mode: "Markdown",
       ...Markup.keyboard([
@@ -644,24 +428,28 @@ bot.hears("📞 پشتیبانی", async (ctx) => {
 });
 
 // ===============================
-// آقای محمدی
+// کارشناس فروش ۱
 // ===============================
 bot.hears("👨‍💼 آقای محمدی", async (ctx) => {
   await ctx.reply(
-    "👨‍💼 آقای محمدی\n\n" +
-    "📞 شماره تماس:\n" +
-    "09058531174"
+    "👨‍💼 *کارشناس فروش*\n\n" +
+    "📞 09058531174",
+    {
+      parse_mode: "Markdown",
+    }
   );
 });
 
 // ===============================
-// خانم حسین زاده
+// کارشناس فروش ۲
 // ===============================
 bot.hears("👩‍💼 خانم حسین زاده", async (ctx) => {
   await ctx.reply(
-    "👩‍💼 خانم حسین زاده\n\n" +
-    "📞 شماره تماس:\n" +
-    "09058531170"
+    "👩‍💼 *کارشناس فروش*\n\n" +
+    "📞 09058531170",
+    {
+      parse_mode: "Markdown",
+    }
   );
 });
 
@@ -670,42 +458,29 @@ bot.hears("👩‍💼 خانم حسین زاده", async (ctx) => {
 // ===============================
 bot.hears("🛡 مسئول گارانتی", async (ctx) => {
   await ctx.reply(
-    "🛡 مسئول گارانتی\n\n" +
-    "🆔 آیدی تلگرام:\n" +
-    "@Mohammadi_Tak"
+    "🛡 *مسئول گارانتی*\n\n" +
+    "📞 09058531171",
+    {
+      parse_mode: "Markdown",
+    }
   );
 });
 
 // ===============================
 // بازگشت به منوی اصلی
 // ===============================
-bot.hears(
-  "🔙 بازگشت به منوی اصلی",
-  async (ctx) => {
-    try {
-      await showMainMenu(ctx);
-    } catch (error) {
-      console.error(
-        "خطا در بازگشت:",
-        error.message
-      );
-    }
-  }
-);
+bot.hears("🔙 بازگشت به منوی اصلی", async (ctx) => {
+  await showMainMenu(ctx);
+});
 
 // ===============================
-// مدیریت خطا
+// مدیریت خطاها
 // ===============================
-bot.catch((error, ctx) => {
-  console.error(
-    "BOT ERROR:",
-    error.response?.data ||
-    error.message ||
-    error
-  );
+bot.catch((err, ctx) => {
+  console.error("BOT ERROR:", err);
 
   ctx.reply(
-    "❌ متأسفانه خطایی رخ داد. لطفاً دوباره تلاش کنید."
+    "❌ خطایی در ربات رخ داد.\nلطفاً چند لحظه دیگر دوباره تلاش کنید."
   ).catch(() => {});
 });
 
@@ -714,20 +489,15 @@ bot.catch((error, ctx) => {
 // ===============================
 bot.launch();
 
-console.log(
-  "🤖 TAKORG Bot is running..."
-);
+console.log("🤖 TAKORG Bot V2 is running...");
 
 // ===============================
-// خاموش شدن صحیح ربات
+// خاموش شدن ایمن
 // ===============================
-process.once(
-  "SIGINT",
-  () => bot.stop("SIGINT")
-);
+process.once("SIGINT", () => {
+  bot.stop("SIGINT");
+});
 
-process.once(
-  "SIGTERM",
-  () => bot.stop("SIGTERM")
-);
-
+process.once("SIGTERM", () => {
+  bot.stop("SIGTERM");
+});
