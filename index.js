@@ -68,20 +68,23 @@ bot.hears("🔙 بازگشت به منوی اصلی", (ctx) => {
 // ===============================
 bot.on("text", async (ctx, next) => {
   const text = ctx.message.text;
+const menuButtons = [
+  "🛍 مشاهده محصولات",
+  "🔍 جستجوی محصول",
+  "🛒 سبد خرید",
+  "📦 سفارش‌های من",
+  "📞 پشتیبانی",
 
-  const ignoreButtons = [
-    "🛍 مشاهده محصولات",
-    "🔍 جستجوی محصول",
-    "🛒 سبد خرید",
-    "📦 سفارش‌های من",
-    "📞 پشتیبانی",
-    "🔙 بازگشت به منوی اصلی",
-  ];
+  "👨‍💼 آقای محمدی",
+  "👩‍💼 خانم حسین‌زاده",
+  "🛡 مسئول گارانتی",
 
-  if (ignoreButtons.includes(text) || text.startsWith("/")) {
-    return next();
-  }
+  "🔙 بازگشت به منوی اصلی",
+];
 
+if (menuButtons.includes(text)) {
+  return;
+}
   try {
     const products = await getProductsByCategory(text);
 
