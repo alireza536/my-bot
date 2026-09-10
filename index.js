@@ -4,14 +4,20 @@ const { Telegraf, Markup } = require("telegraf");
 const {
   getCategories,
   getProductsByCategory,
+  searchProducts,
 } = require("./woocommerce");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
+
+// ذخیره وضعیت جستجوی کاربران
+const searchMode = new Map();
 
 // ===============================
 // منوی اصلی
 // ===============================
 function showMainMenu(ctx) {
+  searchMode.delete(ctx.from.id);
+
   return ctx.reply(
     "🛍 *به فروشگاه TAKORG خوش آمدید*\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
     {
@@ -28,82 +34,111 @@ function showMainMenu(ctx) {
 // ===============================
 // شروع ربات
 // ===============================
-bot.start((ctx) => {
-  showMainMenu(ctx);
-});
+bot.start((ctx) => showMainMenu(ctx));
 
 // ===============================
-// مشاهده دسته‌بندی‌های ووکامرس
+// مشاهده دسته‌بندی‌ها
 // ===============================
 bot.hears("🛍 مشاهده محصولات", async (ctx) => {
   try {
     const categories = await getCategories();
 
-    if (!categories.length) {
-      return ctx.reply("❌ هیچ دسته‌بندی‌ای در فروشگاه پیدا نشد.");
-    }
-
     const buttons = categories.map((cat) => [cat.name]);
     buttons.push(["🔙 بازگشت به منوی اصلی"]);
 
     ctx.reply(
-      "🛍 یک دسته‌بندی را انتخاب کنید:",
+      "📂 یک دسته‌بندی را انتخاب کنید:",
       Markup.keyboard(buttons).resize()
     );
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    ctx.reply("❌ نتوانستم دسته‌بندی‌های فروشگاه را دریافت کنم.");
+    console.error(err.message);
+    ctx.reply("❌ خطا در دریافت دسته‌بندی‌ها.");
   }
 });
 
 // ===============================
-// بازگشت
-// ===============================
-bot.hears("🔙 بازگشت به منوی اصلی", (ctx) => {
-  showMainMenu(ctx);
-});
-
-// ===============================
-// نمایش محصولات هر دسته
+// انتخاب دسته‌بندی
 // ===============================
 bot.on("text", async (ctx, next) => {
   const text = ctx.message.text;
-const menuButtons = [
-  "🛍 مشاهده محصولات",
-  "🔍 جستجوی محصول",
-  "🛒 سبد خرید",
-  "📦 سفارش‌های من",
-  "📞 پشتیبانی",
 
-  "👨‍💼 آقای محمدی",
-  "👩‍💼 خانم حسین‌زاده",
-  "🛡 مسئول گارانتی",
+  const menuButtons = [
+    "🛍 مشاهده محصولات",
+    "🔍 جستجوی محصول",
+    "🛒 سبد خرید",
+    "📦 سفارش‌های من",
+    "📞 پشتیبانی",
+    "👨‍💼 آقای محمدی",
+    "👩‍💼 خانم حسین‌زاده",
+    "🛡 مسئول گارانتی",
+    "🔙 بازگشت به منوی اصلی",
+  ];
 
-  "🔙 بازگشت به منوی اصلی",
-];
+  // منوها رد شوند
+  if (menuButtons.includes(text)) return next();
 
-if (menuButtons.includes(text)) {
-  return;
-}
+  // حالت جستجو
+  if (searchMode.get(ctx.from.id)) {
+    try {
+      const products = await searchProducts(text);
+
+      if (!products.length) {
+        return ctx.reply("❌ محصولی پیدا نشد.");
+      }
+
+      searchMode.delete(ctx.from.id);
+
+      for (const product of products) {
+        const image = product.images?.length
+          ? product.images[0].src
+          : null;
+
+        const caption =
+`🛍 *${product.name}*
+
+💰 قیمت: *${Number(product.price).toLocaleString("fa-IR")} تومان*
+
+${product.short_description.replace(/<[^>]*>/g, "").substring(0,150)}`;
+
+        if (image) {
+          await ctx.replyWithPhoto(image, {
+            caption,
+            parse_mode: "Markdown",
+            ...Markup.inlineKeyboard([
+              [Markup.button.url("🛒 خرید از سایت", product.permalink)],
+            ]),
+          });
+        } else {
+          await ctx.reply(caption, {
+            parse_mode: "Markdown",
+          });
+        }
+      }
+
+      return;
+    } catch (err) {
+      console.error(err.message);
+      return ctx.reply("❌ خطا در جستجو.");
+    }
+  }
+
+  // دسته‌بندی
   try {
     const products = await getProductsByCategory(text);
 
-    if (!products.length) {
-      return next();
-    }
+    if (!products.length) return;
 
     for (const product of products) {
-      const image =
-        product.images.length > 0 ? product.images[0].src : null;
+      const image = product.images?.length
+        ? product.images[0].src
+        : null;
 
       const caption =
 `🛍 *${product.name}*
 
-💰 قیمت: *${product.price} تومان*
+💰 قیمت: *${Number(product.price).toLocaleString("fa-IR")} تومان*
 
-${product.short_description
-  .replace(/<[^>]*>/g, "")
-  .substring(0, 100)}`;
+${product.short_description.replace(/<[^>]*>/g, "").substring(0,150)}`;
 
       if (image) {
         await ctx.replyWithPhoto(image, {
@@ -116,24 +151,23 @@ ${product.short_description
       } else {
         await ctx.reply(caption, {
           parse_mode: "Markdown",
-          ...Markup.inlineKeyboard([
-            [Markup.button.url("🛒 خرید از سایت", product.permalink)],
-          ]),
         });
       }
     }
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    ctx.reply("❌ خطا در دریافت محصولات.");
+    console.error(err.message);
   }
 });
 
 // ===============================
-// جستجوی محصول
+// جستجو
 // ===============================
 bot.hears("🔍 جستجوی محصول", (ctx) => {
+  searchMode.set(ctx.from.id, true);
+
   ctx.reply(
-    "🔎 نام محصول را بنویسید.\n\nمثلاً:\n• اسپیکر\n• AUX\n• هدفون"
+    "🔎 نام محصول را وارد کنید.\n\nمثلاً:\n• اسپیکر JBL\n• کابل آیفون\n• ساعت هوشمند",
+    Markup.keyboard([["🔙 بازگشت به منوی اصلی"]]).resize()
   );
 });
 
@@ -141,31 +175,19 @@ bot.hears("🔍 جستجوی محصول", (ctx) => {
 // سبد خرید
 // ===============================
 bot.hears("🛒 سبد خرید", (ctx) => {
-  ctx.reply(
-    "🛒 سبد خرید شما فعلاً خالی است.\n\nدر نسخه بعدی مستقیماً به سبد خرید ووکامرس متصل می‌شود."
-  );
+  ctx.reply("🛒 سبد خرید شما فعلاً خالی است.");
 });
 
 // ===============================
-// سفارش‌های من
+// سفارش‌ها
 // ===============================
 bot.hears("📦 سفارش‌های من", (ctx) => {
-  ctx.reply(
-    "📦 در نسخه بعدی سفارش‌های واقعی ووکامرس شما اینجا نمایش داده می‌شود."
-  );
+  ctx.reply("📦 در نسخه بعدی سفارش‌های ووکامرس نمایش داده می‌شود.");
 });
 
 // ===============================
 // پشتیبانی
 // ===============================
-// ===============================
-// پشتیبانی
-// ===============================
-
-// ===============================
-// پشتیبانی TAKORG
-// ===============================
-
 bot.hears("📞 پشتیبانی", (ctx) => {
   ctx.reply(
     "📞 *بخش پشتیبانی TAKORG*\n\nلطفاً واحد موردنظر را انتخاب کنید:",
@@ -184,12 +206,12 @@ bot.hears("📞 پشتیبانی", (ctx) => {
 // آقای محمدی
 bot.hears("👨‍💼 آقای محمدی", (ctx) => {
   ctx.reply(
-    `👨‍💼 *آقای محمدی*
+`👨‍💼 *آقای محمدی*
 
 📞 شماره تماس:
 09123456789
 
-🆔 آیدی تلگرام:
+💬 آیدی تلگرام:
 @MohammadiTAK`,
     { parse_mode: "Markdown" }
   );
@@ -198,12 +220,12 @@ bot.hears("👨‍💼 آقای محمدی", (ctx) => {
 // خانم حسین‌زاده
 bot.hears("👩‍💼 خانم حسین‌زاده", (ctx) => {
   ctx.reply(
-    `👩‍💼 *خانم حسین‌زاده*
+`👩‍💼 *خانم حسین‌زاده*
 
 📞 شماره تماس:
 09351234567
 
-🆔 آیدی تلگرام:
+💬 آیدی تلگرام:
 @HosseinzadehTAK`,
     { parse_mode: "Markdown" }
   );
@@ -212,12 +234,12 @@ bot.hears("👩‍💼 خانم حسین‌زاده", (ctx) => {
 // مسئول گارانتی
 bot.hears("🛡 مسئول گارانتی", (ctx) => {
   ctx.reply(
-    `🛡 *مسئول گارانتی*
+`🛡 *مسئول گارانتی*
 
 📞 شماره تماس:
 09058531174
 
-🆔 آیدی تلگرام:
+💬 آیدی تلگرام:
 @TakorgWarranty`,
     { parse_mode: "Markdown" }
   );
@@ -227,9 +249,10 @@ bot.hears("🛡 مسئول گارانتی", (ctx) => {
 bot.hears("🔙 بازگشت به منوی اصلی", (ctx) => {
   showMainMenu(ctx);
 });
+
 // ===============================
 // اجرای ربات
 // ===============================
 bot.launch();
 
-console.log("🤖 TAKORG Bot v3 is running...");
+console.log("🤖 TAKORG Bot V3 is running...");
