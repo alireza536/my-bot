@@ -10,6 +10,7 @@ const {
   getUserRole,
   getProductPrice,
   formatPrice,
+  normalizePhone,
 } = require("./woocommerce");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -77,6 +78,47 @@ bot.start(async (ctx) => {
 });
 
 // =====================================
+// دستور تست نقش (فقط برای دیباگ - بعداً حذف کن)
+// =====================================
+
+bot.command("checkrole", async (ctx) => {
+  try {
+    const parts = ctx.message.text.split(" ");
+    const phone = parts[1];
+
+    if (!phone) {
+      return ctx.reply(
+        "لطفاً اینطور بنویس:\n/checkrole 09058531174"
+      );
+    }
+
+    await ctx.reply(
+      `📱 شماره ورودی: ${phone}\n` +
+      `🔄 شماره نرمال‌شده: ${normalizePhone(phone)}`
+    );
+
+    const user = await findUserByPhone(phone);
+    const role = getUserRole(user);
+
+    if (!user) {
+      return ctx.reply(
+        `❌ هیچ کاربری با این شماره پیدا نشد.`
+      );
+    }
+
+    return ctx.reply(
+      `👤 کاربر پیدا شد: ${user.username}\n` +
+      `📞 شماره ذخیره‌شده کاربر: ${user.phone}\n` +
+      `🔑 role واقعی تو دیتابیس: ${user.role}\n` +
+      `🎯 role تشخیص‌داده‌شده: ${role}`
+    );
+  } catch (err) {
+    console.error("Checkrole Error:", err.message);
+    return ctx.reply("❌ خطا در بررسی.");
+  }
+});
+
+// =====================================
 // دریافت شماره موبایل
 // =====================================
 
@@ -99,10 +141,6 @@ bot.on("contact", async (ctx) => {
 
     const user = await findUserByPhone(phone);
 
-    // ============================
-    // لاگ موقت برای دیباگ نقش کاربر
-    // (بعد از پیدا کردن مشکل، این خط رو حذف کن)
-    // ============================
     console.log("USER DATA:", JSON.stringify(user, null, 2));
 
     const role = getUserRole(user);
