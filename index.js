@@ -10,6 +10,7 @@ const {
   getUserRole,
   getProductPrice,
   formatPrice,
+  normalizePhone,
 } = require("./woocommerce");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -109,10 +110,15 @@ bot.on("contact", async (ctx) => {
       );
     }
 
-    let phone = contact.phone_number
-      .replace(/\s+/g, "")
-      .replace(/^\+98/, "0")
-      .replace(/^98/, "0");
+    // شماره خام دریافتی از تلگرام را با همان تابع نرمال‌ساز
+    // مشترکِ woocommerce.js به فرمت یکسان "9123456789" تبدیل می‌کنیم
+    // تا با شماره‌های ذخیره‌شده در سایت همیشه یکسان مقایسه شود.
+    const rawPhone = contact.phone_number;
+    const phone = normalizePhone(rawPhone);
+
+    console.log(
+      `📞 [Telegram] شماره خام دریافتی: ${rawPhone} | نرمال‌شده: ${phone}`
+    );
 
     await ctx.reply("🔍 در حال بررسی شماره شما در سایت...");
 

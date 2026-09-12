@@ -316,6 +316,8 @@ async function getAllCustomers() {
 
 async function findUserByPhone(phone) {
   try {
+    console.log(`📥 [Auth] شماره ورودی خام: ${phone}`);
+
     const normalized = normalizePhone(phone);
 
     console.log(`🔍 [Auth] شماره نرمال‌شده جهت جستجو: ${normalized}`);
@@ -345,6 +347,8 @@ async function findUserByPhone(phone) {
         ["meta:phone", getMeta(u, ["phone"])],
         ["meta:billing_phone", getMeta(u, ["billing_phone"])],
         ["meta:shipping_phone", getMeta(u, ["shipping_phone"])],
+        ["meta:digits_phone", getMeta(u, ["digits_phone"])],
+        ["meta:digits_phone_no", getMeta(u, ["digits_phone_no"])],
       ];
 
       for (const [fieldName, rawValue] of fieldsToCheck) {
