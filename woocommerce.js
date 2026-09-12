@@ -271,7 +271,7 @@ async function getBestSellingProducts() {
 }
 
 // =====================================
-// دریافت کاربران ووکامرس (اصلاح‌شده: همه نقش‌ها)
+// دریافت کاربران ووکامرس (همه صفحات)
 // =====================================
 
 async function getAllCustomers() {
@@ -284,14 +284,12 @@ async function getAllCustomers() {
         params: {
           per_page: 100,
           page,
-          role: "all", // <-- بدون این، فقط نقش customer برمی‌گرده
         },
       });
 
       allUsers.push(...data);
 
       if (data.length < 100) break;
-
       page++;
     }
 
@@ -301,13 +299,13 @@ async function getAllCustomers() {
       "Users Error:",
       err.response?.data || err.message
     );
-
     return [];
   }
 }
 
 // =====================================
 // پیدا کردن کاربر بر اساس شماره موبایل
+// (billing.phone و shipping.phone هر دو بررسی می‌شوند)
 // =====================================
 
 async function findUserByPhone(phone) {
@@ -355,7 +353,7 @@ async function findUserByPhone(phone) {
 }
 
 // =====================================
-// تشخیص نقش کاربر
+// تشخیص نقش کاربر (همکار / مشتری)
 // =====================================
 
 function getUserRole(user) {
@@ -363,18 +361,18 @@ function getUserRole(user) {
 
   const role = String(user.role || "").toLowerCase();
 
-  if (
-    role === "shop_manager" ||
-    role === "wholesale_customer" ||
-    role === "b2b_customer" ||
-    role === "partner" ||
-    role === "hamkar"
-  ) {
-    return "hamkar";
-  }
+  const hamkarRoles = [
+    "hamkar",
+    "wholesale_customer",
+    "shop_manager",
+    "partner",
+    "b2b_customer",
+    "reseller",
+    "dealer",
+  ];
 
-  if (role === "customer") {
-    return "customer";
+  if (hamkarRoles.includes(role)) {
+    return "hamkar";
   }
 
   return "customer";
@@ -382,29 +380,25 @@ function getUserRole(user) {
 
 // =====================================
 // دریافت قیمت بر اساس نقش
+// ترتیب اولویت کلیدهای Meta برای قیمت همکار
 // =====================================
 
-function getProductPrice(product, role = "guest") {
+function getProductPrice(product, role = "customer") {
   let price = product.price;
 
   if (role === "hamkar") {
-    price = getMeta(product, [
-      "_price_role_hamkar",
+    const hamkarPrice = getMeta(product, [
       "_hamkar_price",
       "_wholesale_price",
+      "_price_role_hamkar",
+      "wholesale_customer_wholesale_price",
+      "wholesale_price",
       "_employee_price",
     ]);
-  }
 
-  if (role === "customer") {
-    price = getMeta(product, [
-      "_price_role_customer",
-      "_customer_price",
-    ]);
-  }
-
-  if (!price) {
-    price = product.price;
+    if (hamkarPrice) {
+      price = hamkarPrice;
+    }
   }
 
   return Number(price || 0);

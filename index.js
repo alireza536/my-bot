@@ -16,6 +16,8 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // =====================================
 // وضعیت کاربران
+// (در حافظه؛ تا زمانی که ربات ری‌استارت نشود،
+// کاربرِ شناخته‌شده دیگر نیازی به ارسال دوبارهٔ شماره ندارد)
 // =====================================
 
 const users = new Map();
@@ -50,7 +52,7 @@ function requestPhone(ctx) {
     "📱 برای مشاهده قیمت محصولات، ابتدا شماره موبایل خود را ارسال کنید.",
     Markup.keyboard([
       [
-        Markup.button.contactRequest("📱 ارسال شماره موبایل"),
+        Markup.button.contactRequest("📱 ارسال شماره موبایل")
       ],
     ])
       .oneTime()
@@ -65,7 +67,21 @@ function requestPhone(ctx) {
 bot.start(async (ctx) => {
   const telegramId = ctx.from.id;
 
-  users.delete(telegramId);
+  const existing = users.get(telegramId);
+
+  // اگر کاربر قبلاً در همین اجرا شماره‌اش را ارسال و تأیید کرده،
+  // دیگر شماره نخواه و مستقیم منوی اصلی را نشان بده.
+  if (existing) {
+    const name = existing.firstName ? `${existing.firstName} عزیز، ` : "";
+
+    await ctx.reply(
+      `🛍 *${name}به فروشگاه TAKORG خوش آمدید*`,
+      { parse_mode: "Markdown" }
+    );
+
+    return showMainMenu(ctx);
+  }
+
   searchMode.delete(telegramId);
 
   await ctx.reply(
@@ -93,26 +109,25 @@ bot.on("contact", async (ctx) => {
       );
     }
 
-    const phone = contact.phone_number;
+    let phone = contact.phone_number
+      .replace(/\s+/g, "")
+      .replace(/^\+98/, "0")
+      .replace(/^98/, "0");
 
     await ctx.reply("🔍 در حال بررسی شماره شما در سایت...");
 
     const user = await findUserByPhone(phone);
 
-    // ============================
-    // لاگ موقت برای دیباگ نقش کاربر
-    // (بعد از پیدا کردن مشکل، این خط رو حذف کن)
-    // ============================
-    console.log("USER DATA:", JSON.stringify(user, null, 2));
-
-    const role = getUserRole(user);
-
-    console.log("DETECTED ROLE:", role);
+    const role = getUserRole(user) || "customer";
 
     users.set(telegramId, {
+      telegramId,
       phone,
-      user,
       role,
+      customerId: user?.id || null,
+      firstName: user?.firstName || null,
+      lastName: user?.lastName || null,
+      user,
     });
 
     if (user) {
@@ -127,7 +142,7 @@ bot.on("contact", async (ctx) => {
       }
     } else {
       await ctx.reply(
-        "ℹ️ شماره شما در لیست کاربران سایت پیدا نشد.\n\n💰 قیمت مشتره برای شما نمایش داده می‌شود."
+        "ℹ️ شماره شما در لیست کاربران سایت پیدا نشد.\n\n💰 قیمت مشتری برای شما نمایش داده می‌شود."
       );
     }
 
@@ -355,19 +370,19 @@ bot.hears("📞 پشتیبانی", (ctx) => {
 
 bot.hears("👨‍💼 آقای محمدی", (ctx) => {
   ctx.reply(
-    `👨‍💼 آقای محمدی\n\n📞 شماره تماس:\n09058531174\n\n💬 آیدی تلگرام:\n@Mohammadi_Tak`
+    "👨‍💼 آقای محمدی\n\n📞 شماره تماس:\n09058531174\n\n💬 آیدی تلگرام:\n@Mohammadi_Tak"
   );
 });
 
 bot.hears("👩‍💼 خانم حسین‌زاده", (ctx) => {
   ctx.reply(
-    `👩‍💼 خانم حسین‌زاده\n\n📞 شماره تماس:\n09058531170\n\n💬 آیدی تلگرام:\n@Hosseinzadeh_TAK`
+    "👩‍💼 خانم حسین‌زاده\n\n📞 شماره تماس:\n09058531170\n\n💬 آیدی تلگرام:\n@Hosseinzadeh_TAK"
   );
 });
 
 bot.hears("🛡 مسئول گارانتی", (ctx) => {
   ctx.reply(
-    `🛡 مسئول گارانتی\n\n📞 شماره تماس:\n09058531174\n\n💬 آیدی تلگرام:\n@Mohammadi_Tak`
+    "🛡 مسئول گارانتی\n\n📞 شماره تماس:\n09058531174\n\n💬 آیدی تلگرام:\n@Mohammadi_Tak"
   );
 });
 
