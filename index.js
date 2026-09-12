@@ -1,20 +1,30 @@
 require("dotenv").config();
 
 const { Telegraf, Markup } = require("telegraf");
+
 const {
   getCategories,
   getProductsByCategory,
   searchProducts,
+  findUserByPhone,
+  getUserRole,
+  getProductPrice,
+  formatPrice,
 } = require("./woocommerce");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// ذخیره وضعیت جستجوی کاربران
+// =====================================
+// وضعیت کاربران
+// =====================================
+
+const users = new Map();
 const searchMode = new Map();
 
-// ===============================
+// =====================================
 // منوی اصلی
-// ===============================
+// =====================================
+
 function showMainMenu(ctx) {
   searchMode.delete(ctx.from.id);
 
@@ -31,34 +41,179 @@ function showMainMenu(ctx) {
   );
 }
 
-// ===============================
-// شروع ربات
-// ===============================
-bot.start((ctx) => showMainMenu(ctx));
+// =====================================
+// درخواست شماره موبایل
+// =====================================
 
-// ===============================
+function requestPhone(ctx) {
+  return ctx.reply(
+    "📱 برای مشاهده قیمت محصولات، ابتدا شماره موبایل خود را ارسال کنید.",
+    Markup.keyboard([
+      [
+        Markup.button.contactRequest("📱 ارسال شماره موبایل"),
+      ],
+    ])
+      .oneTime()
+      .resize()
+  );
+}
+
+// =====================================
+// استارت ربات
+// =====================================
+
+bot.start(async (ctx) => {
+  const telegramId = ctx.from.id;
+
+  users.delete(telegramId);
+  searchMode.delete(telegramId);
+
+  await ctx.reply(
+    "🛍 *به فروشگاه TAKORG خوش آمدید*\n\nبرای شروع، شماره موبایل خود را ارسال کنید.",
+    { parse_mode: "Markdown" }
+  );
+
+  return requestPhone(ctx);
+});
+
+// =====================================
+// دریافت شماره موبایل
+// =====================================
+
+bot.on("contact", async (ctx) => {
+  try {
+    const telegramId = ctx.from.id;
+
+    const contact = ctx.message.contact;
+
+    // فقط شماره‌ای که متعلق به خود کاربر است
+    if (contact.user_id && contact.user_id !== telegramId) {
+      return ctx.reply(
+        "❌ لطفاً شماره موبایل خودتان را ارسال کنید."
+      );
+    }
+
+    const phone = contact.phone_number;
+
+    await ctx.reply("🔍 در حال بررسی شماره شما در سایت...");
+
+    const user = await findUserByPhone(phone);
+
+    const role = getUserRole(user);
+
+    users.set(telegramId, {
+      phone,
+      user,
+      role,
+    });
+
+    if (user) {
+      if (role === "hamkar") {
+        await ctx.reply(
+          "✅ شماره شما تأیید شد.\n\n👨‍💼 نقش شما: همکار\n\nقیمت‌های همکاری برای شما نمایش داده می‌شود."
+        );
+      } else {
+        await ctx.reply(
+          "✅ شماره شما تأیید شد.\n\n👤 نقش شما: مشتری\n\nقیمت‌های مشتری برای شما نمایش داده می‌شود."
+        );
+      }
+    } else {
+      await ctx.reply(
+        "ℹ️ شماره شما در لیست کاربران سایت پیدا نشد.\n\n💰 قیمت مشتره برای شما نمایش داده می‌شود."
+      );
+    }
+
+    return showMainMenu(ctx);
+  } catch (err) {
+    console.error("Contact Error:", err.message);
+
+    return ctx.reply(
+      "❌ خطا در بررسی شماره. لطفاً دوباره تلاش کنید."
+    );
+  }
+});
+
+// =====================================
 // مشاهده دسته‌بندی‌ها
-// ===============================
+// =====================================
+
 bot.hears("🛍 مشاهده محصولات", async (ctx) => {
   try {
+    if (!users.has(ctx.from.id)) {
+      return requestPhone(ctx);
+    }
+
     const categories = await getCategories();
 
     const buttons = categories.map((cat) => [cat.name]);
+
     buttons.push(["🔙 بازگشت به منوی اصلی"]);
 
-    ctx.reply(
+    return ctx.reply(
       "📂 یک دسته‌بندی را انتخاب کنید:",
       Markup.keyboard(buttons).resize()
     );
   } catch (err) {
     console.error(err.message);
-    ctx.reply("❌ خطا در دریافت دسته‌بندی‌ها.");
+
+    return ctx.reply("❌ خطا در دریافت دسته‌بندی‌ها.");
   }
 });
 
-// ===============================
-// انتخاب دسته‌بندی
-// ===============================
+// =====================================
+// نمایش محصول با قیمت نقش
+// =====================================
+
+async function sendProduct(ctx, product) {
+  const telegramId = ctx.from.id;
+
+  const userData = users.get(telegramId);
+
+  const role = userData?.role || "guest";
+
+  const price = getProductPrice(product, role);
+
+  const priceText = formatPrice(price);
+
+  const shortDescription = String(
+    product.short_description || ""
+  )
+    .replace(/<[^>]*>/g, "")
+    .substring(0, 150);
+
+  const caption =
+    `🛍 *${product.name}*\n\n` +
+    `💰 قیمت: *${priceText} تومان*\n\n` +
+    `${shortDescription}`;
+
+  const image = product.images?.length
+    ? product.images[0].src
+    : null;
+
+  if (image) {
+    return ctx.replyWithPhoto(image, {
+      caption,
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🛒 خرید از سایت",
+            product.permalink
+          ),
+        ],
+      ]),
+    });
+  }
+
+  return ctx.reply(caption, {
+    parse_mode: "Markdown",
+  });
+}
+
+// =====================================
+// انتخاب دسته‌بندی و جستجو
+// =====================================
+
 bot.on("text", async (ctx, next) => {
   const text = ctx.message.text;
 
@@ -74,8 +229,13 @@ bot.on("text", async (ctx, next) => {
     "🔙 بازگشت به منوی اصلی",
   ];
 
-  // منوها رد شوند
-  if (menuButtons.includes(text)) return next();
+  if (menuButtons.includes(text)) {
+    return next();
+  }
+
+  if (!users.has(ctx.from.id)) {
+    return requestPhone(ctx);
+  }
 
   // حالت جستجو
   if (searchMode.get(ctx.from.id)) {
@@ -89,35 +249,13 @@ bot.on("text", async (ctx, next) => {
       searchMode.delete(ctx.from.id);
 
       for (const product of products) {
-        const image = product.images?.length
-          ? product.images[0].src
-          : null;
-
-        const caption =
-`🛍 *${product.name}*
-
-💰 قیمت: *${Number(product.price).toLocaleString("fa-IR")} تومان*
-
-${product.short_description.replace(/<[^>]*>/g, "").substring(0,150)}`;
-
-        if (image) {
-          await ctx.replyWithPhoto(image, {
-            caption,
-            parse_mode: "Markdown",
-            ...Markup.inlineKeyboard([
-              [Markup.button.url("🛒 خرید از سایت", product.permalink)],
-            ]),
-          });
-        } else {
-          await ctx.reply(caption, {
-            parse_mode: "Markdown",
-          });
-        }
+        await sendProduct(ctx, product);
       }
 
       return;
     } catch (err) {
       console.error(err.message);
+
       return ctx.reply("❌ خطا در جستجو.");
     }
   }
@@ -129,53 +267,38 @@ ${product.short_description.replace(/<[^>]*>/g, "").substring(0,150)}`;
     if (!products.length) return;
 
     for (const product of products) {
-      const image = product.images?.length
-        ? product.images[0].src
-        : null;
-
-      const caption =
-`🛍 *${product.name}*
-
-💰 قیمت: *${Number(product.price).toLocaleString("fa-IR")} تومان*
-
-${product.short_description.replace(/<[^>]*>/g, "").substring(0,150)}`;
-
-      if (image) {
-        await ctx.replyWithPhoto(image, {
-          caption,
-          parse_mode: "Markdown",
-          ...Markup.inlineKeyboard([
-            [Markup.button.url("🛒 خرید از سایت", product.permalink)],
-          ]),
-        });
-      } else {
-        await ctx.reply(caption, {
-          parse_mode: "Markdown",
-        });
-      }
+      await sendProduct(ctx, product);
     }
   } catch (err) {
     console.error(err.message);
   }
 });
 
-// ===============================
+// =====================================
 // جستجو
-// ===============================
+// =====================================
+
 bot.hears("🔍 جستجوی محصول", (ctx) => {
+  if (!users.has(ctx.from.id)) {
+    return requestPhone(ctx);
+  }
+
   searchMode.set(ctx.from.id, true);
 
-  ctx.reply(
+  return ctx.reply(
     "🔎 نام محصول را وارد کنید.\n\nمثلاً:\n• اسپیکر JBL\n• کابل آیفون\n• ساعت هوشمند",
-    Markup.keyboard([["🔙 بازگشت به منوی اصلی"]]).resize()
+    Markup.keyboard([
+      ["🔙 بازگشت به منوی اصلی"],
+    ]).resize()
   );
 });
 
-// ===============================
+// =====================================
 // سبد خرید
-// ===============================
+// =====================================
+
 bot.hears("🛒 سبد خرید", (ctx) => {
-  ctx.reply(
+  return ctx.reply(
     "🛒 برای مشاهده سبد خرید، ابتدا وارد حساب کاربری خود شوید.",
     Markup.inlineKeyboard([
       [
@@ -188,11 +311,12 @@ bot.hears("🛒 سبد خرید", (ctx) => {
   );
 });
 
-// ===============================
+// =====================================
 // سفارش‌های من
-// ===============================
+// =====================================
+
 bot.hears("📦 سفارش‌های من", (ctx) => {
-  ctx.reply(
+  return ctx.reply(
     "📦 برای مشاهده سفارش‌های خود، ابتدا وارد حساب کاربری شوید.",
     Markup.inlineKeyboard([
       [
@@ -205,11 +329,12 @@ bot.hears("📦 سفارش‌های من", (ctx) => {
   );
 });
 
-// ===============================
+// =====================================
 // پشتیبانی
-// ===============================
+// =====================================
+
 bot.hears("📞 پشتیبانی", (ctx) => {
-  ctx.reply(
+  return ctx.reply(
     "📞 بخش پشتیبانی TAKORG\n\nلطفاً شخص موردنظر را انتخاب کنید:",
     Markup.keyboard([
       ["👨‍💼 آقای محمدی"],
@@ -220,47 +345,36 @@ bot.hears("📞 پشتیبانی", (ctx) => {
   );
 });
 
-// آقای محمدی
 bot.hears("👨‍💼 آقای محمدی", (ctx) => {
-  ctx.reply(`👨‍💼 آقای محمدی
-
-📞 شماره تماس:
-09058531174
-
-💬 آیدی تلگرام:
-@Mohammadi_Tak`);
+  ctx.reply(
+    `👨‍💼 آقای محمدی\n\n📞 شماره تماس:\n09058531174\n\n💬 آیدی تلگرام:\n@Mohammadi_Tak`
+  );
 });
 
-// خانم حسین‌زاده
 bot.hears("👩‍💼 خانم حسین‌زاده", (ctx) => {
-  ctx.reply(`👩‍💼 خانم حسین‌زاده
-
-📞 شماره تماس:
-09058531170
-
-💬 آیدی تلگرام:
-@Hosseinzadeh_TAK`);
+  ctx.reply(
+    `👩‍💼 خانم حسین‌زاده\n\n📞 شماره تماس:\n09058531170\n\n💬 آیدی تلگرام:\n@Hosseinzadeh_TAK`
+  );
 });
 
-// مسئول گارانتی
 bot.hears("🛡 مسئول گارانتی", (ctx) => {
-  ctx.reply(`🛡 مسئول گارانتی
-
-📞 شماره تماس:
-09058531174
-
-💬 آیدی تلگرام:
-@Mohammadi_Tak`);
+  ctx.reply(
+    `🛡 مسئول گارانتی\n\n📞 شماره تماس:\n09058531174\n\n💬 آیدی تلگرام:\n@Mohammadi_Tak`
+  );
 });
 
+// =====================================
 // بازگشت
+// =====================================
+
 bot.hears("🔙 بازگشت به منوی اصلی", (ctx) => {
-  showMainMenu(ctx);
+  return showMainMenu(ctx);
 });
 
-// ===============================
+// =====================================
 // اجرای ربات
-// ===============================
+// =====================================
+
 bot.launch();
 
-console.log("🤖 TAKORG Bot V3 is running...");
+console.log("🤖 TAKORG Bot V4 is running...");

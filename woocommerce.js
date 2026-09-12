@@ -1,9 +1,10 @@
 const axios = require("axios");
 require("dotenv").config();
 
-// ===============================
+// =====================================
 // اتصال به ووکامرس
-// ===============================
+// =====================================
+
 const api = axios.create({
   baseURL: `${process.env.WC_URL}/wp-json/wc/v3`,
   auth: {
@@ -13,7 +14,10 @@ const api = axios.create({
   timeout: 20000,
 });
 
-// حذف تگ‌های HTML
+// =====================================
+// ابزارها
+// =====================================
+
 function clean(text = "") {
   return String(text)
     .replace(/<[^>]*>/g, "")
@@ -21,10 +25,47 @@ function clean(text = "") {
     .trim();
 }
 
-// ===============================
+function normalizePhone(phone = "") {
+  let value = String(phone).replace(/[^\d+]/g, "");
+
+  if (value.startsWith("+98")) {
+    value = "0" + value.slice(3);
+  }
+
+  if (value.startsWith("0098")) {
+    value = "0" + value.slice(4);
+  }
+
+  if (value.startsWith("98") && value.length === 12) {
+    value = "0" + value.slice(2);
+  }
+
+  return value;
+}
+
+function getMeta(product, keys = []) {
+  const meta = product.meta_data || [];
+
+  for (const key of keys) {
+    const item = meta.find((m) => m.key === key);
+
+    if (
+      item &&
+      item.value !== null &&
+      item.value !== undefined &&
+      String(item.value).trim() !== ""
+    ) {
+      return String(item.value);
+    }
+  }
+
+  return null;
+}
+
+// =====================================
 // دریافت دسته‌بندی‌ها
-// فقط دسته‌های نهایی که محصول موجود دارند
-// ===============================
+// =====================================
+
 async function getCategories() {
   try {
     const { data } = await api.get("/products/categories", {
@@ -35,19 +76,26 @@ async function getCategories() {
     });
 
     return data.filter((cat) => {
-      const hasChild = data.some((item) => item.parent === cat.id);
+      const hasChild = data.some(
+        (item) => item.parent === cat.id
+      );
+
       return !hasChild && cat.count > 0;
     });
   } catch (err) {
-    console.error("Category Error:", err.response?.data || err.message);
+    console.error(
+      "Category Error:",
+      err.response?.data || err.message
+    );
+
     return [];
   }
 }
 
-// ===============================
+// =====================================
 // دریافت محصولات یک دسته
-// فقط محصولات موجود
-// ===============================
+// =====================================
+
 async function getProductsByCategory(categoryName) {
   try {
     const categories = await getCategories();
@@ -63,7 +111,7 @@ async function getProductsByCategory(categoryName) {
         category: category.id,
         per_page: 20,
         status: "publish",
-        stock_status: "instock", // فقط موجود
+        stock_status: "instock",
       },
     });
 
@@ -73,20 +121,23 @@ async function getProductsByCategory(categoryName) {
         product.catalog_visibility !== "hidden"
     );
   } catch (err) {
-    console.error("Products Error:", err.response?.data || err.message);
+    console.error(
+      "Products Error:",
+      err.response?.data || err.message
+    );
+
     return [];
   }
 }
 
-// ===============================
+// =====================================
 // جستجوی محصول
-// فقط محصولات موجود
-// ===============================
+// =====================================
+
 async function searchProducts(keyword) {
   try {
     const q = clean(keyword);
 
-    // جستجوی مستقیم ووکامرس
     let { data } = await api.get("/products", {
       params: {
         search: keyword,
@@ -104,7 +155,6 @@ async function searchProducts(keyword) {
 
     if (data.length > 0) return data;
 
-    // اگر پیدا نشد، جستجوی دستی بین محصولات موجود
     const res = await api.get("/products", {
       params: {
         per_page: 100,
@@ -131,14 +181,19 @@ async function searchProducts(keyword) {
 
     return data;
   } catch (err) {
-    console.error("Search Error:", err.response?.data || err.message);
+    console.error(
+      "Search Error:",
+      err.response?.data || err.message
+    );
+
     return [];
   }
 }
 
-// ===============================
-// محصولات جدید (فقط موجود)
-// ===============================
+// =====================================
+// محصولات جدید
+// =====================================
+
 async function getLatestProducts() {
   try {
     const { data } = await api.get("/products", {
@@ -153,14 +208,19 @@ async function getLatestProducts() {
 
     return data.filter((p) => p.stock_status === "instock");
   } catch (err) {
-    console.error("Latest Error:", err.response?.data || err.message);
+    console.error(
+      "Latest Error:",
+      err.response?.data || err.message
+    );
+
     return [];
   }
 }
 
-// ===============================
-// محصولات تخفیف‌دار (فقط موجود)
-// ===============================
+// =====================================
+// محصولات تخفیف‌دار
+// =====================================
+
 async function getSaleProducts() {
   try {
     const { data } = await api.get("/products", {
@@ -174,14 +234,19 @@ async function getSaleProducts() {
 
     return data.filter((p) => p.stock_status === "instock");
   } catch (err) {
-    console.error("Sale Error:", err.response?.data || err.message);
+    console.error(
+      "Sale Error:",
+      err.response?.data || err.message
+    );
+
     return [];
   }
 }
 
-// ===============================
-// محصولات پرفروش (فقط موجود)
-// ===============================
+// =====================================
+// محصولات پرفروش
+// =====================================
+
 async function getBestSellingProducts() {
   try {
     const { data } = await api.get("/products", {
@@ -196,14 +261,166 @@ async function getBestSellingProducts() {
 
     return data.filter((p) => p.stock_status === "instock");
   } catch (err) {
-    console.error("Best Seller Error:", err.response?.data || err.message);
+    console.error(
+      "Best Seller Error:",
+      err.response?.data || err.message
+    );
+
     return [];
   }
 }
 
-// ===============================
-// خروجی توابع
-// ===============================
+// =====================================
+// دریافت کاربران ووکامرس
+// =====================================
+
+async function getAllCustomers() {
+  try {
+    let page = 1;
+    let allUsers = [];
+
+    while (true) {
+      const { data } = await api.get("/customers", {
+        params: {
+          per_page: 100,
+          page,
+        },
+      });
+
+      allUsers.push(...data);
+
+      if (data.length < 100) break;
+
+      page++;
+    }
+
+    return allUsers;
+  } catch (err) {
+    console.error(
+      "Users Error:",
+      err.response?.data || err.message
+    );
+
+    return [];
+  }
+}
+
+// =====================================
+// پیدا کردن کاربر بر اساس شماره موبایل
+// =====================================
+
+async function findUserByPhone(phone) {
+  try {
+    const normalized = normalizePhone(phone);
+
+    if (!normalized) return null;
+
+    const users = await getAllCustomers();
+
+    const user = users.find((user) => {
+      const billingPhone = normalizePhone(
+        user.billing?.phone || ""
+      );
+
+      const shippingPhone = normalizePhone(
+        user.shipping?.phone || ""
+      );
+
+      return (
+        billingPhone === normalized ||
+        shippingPhone === normalized
+      );
+    });
+
+    if (!user) return null;
+
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role || "customer",
+      firstName: user.first_name,
+      lastName: user.last_name,
+      phone: normalized,
+    };
+  } catch (err) {
+    console.error(
+      "Find User Error:",
+      err.response?.data || err.message
+    );
+
+    return null;
+  }
+}
+
+// =====================================
+// تشخیص نقش کاربر
+// =====================================
+
+function getUserRole(user) {
+  if (!user) return "guest";
+
+  const role = String(user.role || "").toLowerCase();
+
+  if (
+    role === "shop_manager" ||
+    role === "wholesale_customer" ||
+    role === "b2b_customer" ||
+    role === "partner" ||
+    role === "hamkar"
+  ) {
+    return "hamkar";
+  }
+
+  if (role === "customer") {
+    return "customer";
+  }
+
+  return "customer";
+}
+
+// =====================================
+// دریافت قیمت بر اساس نقش
+// =====================================
+
+function getProductPrice(product, role = "guest") {
+  let price = product.price;
+
+  if (role === "hamkar") {
+    price = getMeta(product, [
+      "_price_role_hamkar",
+      "_hamkar_price",
+      "_wholesale_price",
+      "_employee_price",
+    ]);
+  }
+
+  if (role === "customer") {
+    price = getMeta(product, [
+      "_price_role_customer",
+      "_customer_price",
+    ]);
+  }
+
+  if (!price) {
+    price = product.price;
+  }
+
+  return Number(price || 0);
+}
+
+// =====================================
+// فرمت قیمت
+// =====================================
+
+function formatPrice(price) {
+  return Number(price || 0).toLocaleString("fa-IR");
+}
+
+// =====================================
+// خروجی
+// =====================================
+
 module.exports = {
   getCategories,
   getProductsByCategory,
@@ -211,4 +428,9 @@ module.exports = {
   getLatestProducts,
   getSaleProducts,
   getBestSellingProducts,
+  findUserByPhone,
+  getUserRole,
+  getProductPrice,
+  formatPrice,
+  normalizePhone,
 };
