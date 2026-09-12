@@ -15,12 +15,15 @@ const api = axios.create({
 
 // حذف تگ‌های HTML
 function clean(text = "") {
-  return text.replace(/<[^>]*>/g, "").toLowerCase();
+  return String(text)
+    .replace(/<[^>]*>/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 // ===============================
 // دریافت دسته‌بندی‌ها
-// فقط دسته‌های نهایی که محصول دارند
+// فقط دسته‌های نهایی که محصول موجود دارند
 // ===============================
 async function getCategories() {
   try {
@@ -43,6 +46,7 @@ async function getCategories() {
 
 // ===============================
 // دریافت محصولات یک دسته
+// فقط محصولات موجود
 // ===============================
 async function getProductsByCategory(categoryName) {
   try {
@@ -59,10 +63,15 @@ async function getProductsByCategory(categoryName) {
         category: category.id,
         per_page: 20,
         status: "publish",
+        stock_status: "instock", // فقط موجود
       },
     });
 
-    return data;
+    return data.filter(
+      (product) =>
+        product.stock_status === "instock" &&
+        product.catalog_visibility !== "hidden"
+    );
   } catch (err) {
     console.error("Products Error:", err.response?.data || err.message);
     return [];
@@ -70,36 +79,47 @@ async function getProductsByCategory(categoryName) {
 }
 
 // ===============================
-// جستجوی محصول (فارسی + انگلیسی + SKU)
+// جستجوی محصول
+// فقط محصولات موجود
 // ===============================
 async function searchProducts(keyword) {
   try {
-    const q = keyword.trim().toLowerCase();
+    const q = clean(keyword);
 
     // جستجوی مستقیم ووکامرس
     let { data } = await api.get("/products", {
       params: {
         search: keyword,
-        per_page: 20,
+        per_page: 50,
         status: "publish",
+        stock_status: "instock",
       },
     });
 
+    data = data.filter(
+      (product) =>
+        product.stock_status === "instock" &&
+        product.catalog_visibility !== "hidden"
+    );
+
     if (data.length > 0) return data;
 
-    // اگر چیزی پیدا نشد، همه محصولات را بگیر و دستی فیلتر کن
+    // اگر پیدا نشد، جستجوی دستی بین محصولات موجود
     const res = await api.get("/products", {
       params: {
         per_page: 100,
         status: "publish",
+        stock_status: "instock",
       },
     });
 
     data = res.data.filter((product) => {
+      if (product.stock_status !== "instock") return false;
+
       const name = clean(product.name);
       const desc = clean(product.description);
       const shortDesc = clean(product.short_description);
-      const sku = (product.sku || "").toLowerCase();
+      const sku = clean(product.sku);
 
       return (
         name.includes(q) ||
@@ -117,7 +137,7 @@ async function searchProducts(keyword) {
 }
 
 // ===============================
-// محصولات جدید
+// محصولات جدید (فقط موجود)
 // ===============================
 async function getLatestProducts() {
   try {
@@ -125,12 +145,13 @@ async function getLatestProducts() {
       params: {
         per_page: 10,
         status: "publish",
+        stock_status: "instock",
         orderby: "date",
         order: "desc",
       },
     });
 
-    return data;
+    return data.filter((p) => p.stock_status === "instock");
   } catch (err) {
     console.error("Latest Error:", err.response?.data || err.message);
     return [];
@@ -138,7 +159,7 @@ async function getLatestProducts() {
 }
 
 // ===============================
-// محصولات تخفیف‌دار
+// محصولات تخفیف‌دار (فقط موجود)
 // ===============================
 async function getSaleProducts() {
   try {
@@ -147,12 +168,35 @@ async function getSaleProducts() {
         on_sale: true,
         per_page: 10,
         status: "publish",
+        stock_status: "instock",
       },
     });
 
-    return data;
+    return data.filter((p) => p.stock_status === "instock");
   } catch (err) {
     console.error("Sale Error:", err.response?.data || err.message);
+    return [];
+  }
+}
+
+// ===============================
+// محصولات پرفروش (فقط موجود)
+// ===============================
+async function getBestSellingProducts() {
+  try {
+    const { data } = await api.get("/products", {
+      params: {
+        per_page: 10,
+        status: "publish",
+        stock_status: "instock",
+        orderby: "popularity",
+        order: "desc",
+      },
+    });
+
+    return data.filter((p) => p.stock_status === "instock");
+  } catch (err) {
+    console.error("Best Seller Error:", err.response?.data || err.message);
     return [];
   }
 }
@@ -166,4 +210,5 @@ module.exports = {
   searchProducts,
   getLatestProducts,
   getSaleProducts,
+  getBestSellingProducts,
 };
