@@ -10,7 +10,6 @@ const {
   getUserRole,
   getProductPrice,
   formatPrice,
-  normalizePhone,
 } = require("./woocommerce");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -43,21 +42,37 @@ function showMainMenu(ctx) {
 }
 
 // =====================================
-// درخواست شماره موبایل
+// دستور تست نقش (فقط برای دیباگ - بعداً حذف کن)
 // =====================================
 
-function requestPhone(ctx) {
+bot.command("checkrole", async (ctx) => {
+  const parts = ctx.message.text.split(" ");
+  const phone = parts[1];
+
+  if (!phone) {
+    return ctx.reply(
+      "لطفاً اینطور بنویس:\n/checkrole 09058531174"
+    );
+  }
+
+  await ctx.reply("🔍 در حال بررسی...");
+
+  const user = await findUserByPhone(phone);
+  const role = getUserRole(user);
+
+  if (!user) {
+    return ctx.reply(
+      `📱 شماره: ${phone}\n❌ هیچ کاربری با این شماره پیدا نشد.`
+    );
+  }
+
   return ctx.reply(
-    "📱 برای مشاهده قیمت محصولات، ابتدا شماره موبایل خود را ارسال کنید.",
-    Markup.keyboard([
-      [
-        Markup.button.contactRequest("📱 ارسال شماره موبایل"),
-      ],
-    ])
-      .oneTime()
-      .resize()
+    `📱 شماره: ${phone}\n` +
+    `👤 کاربر پیدا شد: ${user.username}\n` +
+    `🔑 role واقعی تو دیتابیس: ${user.role}\n` +
+    `🎯 role تشخیص‌داده‌شده توسط ربات: ${role}`
   );
-}
+});
 
 // =====================================
 // استارت ربات
@@ -78,46 +93,69 @@ bot.start(async (ctx) => {
 });
 
 // =====================================
-// دستور تست نقش (فقط برای دیباگ - بعداً حذف کن)
+// دریافت شماره موبایل
 // =====================================
 
-bot.command("checkrole", async (ctx) => {
+bot.on("contact", async (ctx) => {
   try {
-    const parts = ctx.message.text.split(" ");
-    const phone = parts[1];
+    const telegramId = ctx.from.id;
 
-    if (!phone) {
+    const contact = ctx.message.contact;
+
+    // فقط شماره‌ای که متعلق به خود کاربر است
+    if (contact.user_id && contact.user_id !== telegramId) {
       return ctx.reply(
-        "لطفاً اینطور بنویس:\n/checkrole 09058531174"
+        "❌ لطفاً شماره موبایل خودتان را ارسال کنید."
       );
     }
 
-    await ctx.reply(
-      `📱 شماره ورودی: ${phone}\n` +
-      `🔄 شماره نرمال‌شده: ${normalizePhone(phone)}`
-    );
+    const phone = contact.phone_number;
+
+    await ctx.reply("🔍 در حال بررسی شماره شما در سایت...");
 
     const user = await findUserByPhone(phone);
+
+    // ============================
+    // لاگ موقت برای دیباگ نقش کاربر
+    // (بعد از پیدا کردن مشکل، این خط رو حذف کن)
+    // ============================
+    console.log("USER DATA:", JSON.stringify(user, null, 2));
+
     const role = getUserRole(user);
 
-    if (!user) {
-      return ctx.reply(
-        `❌ هیچ کاربری با این شماره پیدا نشد.`
+    console.log("DETECTED ROLE:", role);
+
+    users.set(telegramId, {
+      phone,
+      user,
+      role,
+    });
+
+    if (user) {
+      if (role === "hamkar") {
+        await ctx.reply(
+          "✅ شماره شما تأیید شد.\n\n👨‍💼 نقش شما: همکار\n\nقیمت‌های همکاری برای شما نمایش داده می‌شود."
+        );
+      } else {
+        await ctx.reply(
+          "✅ شماره شما تأیید شد.\n\n👤 نقش شما: مشتری\n\nقیمت‌های مشتری برای شما نمایش داده می‌شود."
+        );
+      }
+    } else {
+      await ctx.reply(
+        "ℹ️ شماره شما در لیست کاربران سایت پیدا نشد.\n\n💰 قیمت مشتری برای شما نمایش داده می‌شود."
       );
     }
 
-    return ctx.reply(
-      `👤 کاربر پیدا شد: ${user.username}\n` +
-      `📞 شماره ذخیره‌شده کاربر: ${user.phone}\n` +
-      `🔑 role واقعی تو دیتابیس: ${user.role}\n` +
-      `🎯 role تشخیص‌داده‌شده: ${role}`
-    );
+    return showMainMenu(ctx);
   } catch (err) {
-    console.error("Checkrole Error:", err.message);
-    return ctx.reply("❌ خطا در بررسی.");
+    console.error("Contact Error:", err.message);
+
+    return ctx.reply(
+      "❌ خطا در بررسی شماره. لطفاً دوباره تلاش کنید."
+    );
   }
 });
-
 
 // =====================================
 // مشاهده دسته‌بندی‌ها
