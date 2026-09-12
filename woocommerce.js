@@ -25,19 +25,25 @@ function clean(text = "") {
     .trim();
 }
 
+// =====================================
+// نرمال‌سازی شماره موبایل
+// همه فرمت‌های ورودی (09123456789 / 989123456789 /
+// +989123456789 / 9123456789) به فرمت یکسان
+// "9123456789" (بدون صفر و بدون کد کشور) تبدیل می‌شوند
+// تا مقایسه‌ها همیشه درست انجام شود.
+// =====================================
+
 function normalizePhone(phone = "") {
   let value = String(phone).replace(/[^\d+]/g, "");
 
   if (value.startsWith("+98")) {
-    value = "0" + value.slice(3);
-  }
-
-  if (value.startsWith("0098")) {
-    value = "0" + value.slice(4);
-  }
-
-  if (value.startsWith("98") && value.length === 12) {
-    value = "0" + value.slice(2);
+    value = value.slice(3);
+  } else if (value.startsWith("0098")) {
+    value = value.slice(4);
+  } else if (value.startsWith("98") && value.length === 12) {
+    value = value.slice(2);
+  } else if (value.startsWith("0")) {
+    value = value.slice(1);
   }
 
   return value;
@@ -312,26 +318,60 @@ async function findUserByPhone(phone) {
   try {
     const normalized = normalizePhone(phone);
 
-    if (!normalized) return null;
+    console.log(`🔍 [Auth] شماره نرمال‌شده جهت جستجو: ${normalized}`);
+
+    if (!normalized) {
+      console.log("⚠️ [Auth] شماره ورودی نامعتبر بود (خالی پس از نرمال‌سازی).");
+      return null;
+    }
 
     const users = await getAllCustomers();
 
-    const user = users.find((user) => {
-      const billingPhone = normalizePhone(
-        user.billing?.phone || ""
-      );
+    console.log(
+      `📊 [Auth] تعداد کاربران دریافت‌شده از ووکامرس: ${users.length}`
+    );
 
-      const shippingPhone = normalizePhone(
-        user.shipping?.phone || ""
-      );
+    let matchedRawPhone = null;
+    let matchedField = null;
 
-      return (
-        billingPhone === normalized ||
-        shippingPhone === normalized
-      );
+    const user = users.find((u) => {
+      // ترتیب اولویت بررسی شماره:
+      // 1) billing.phone  2) shipping.phone
+      // 3) متادیتای mobile / phone / billing_phone / shipping_phone
+      const fieldsToCheck = [
+        ["billing.phone", u.billing?.phone],
+        ["shipping.phone", u.shipping?.phone],
+        ["meta:mobile", getMeta(u, ["mobile"])],
+        ["meta:phone", getMeta(u, ["phone"])],
+        ["meta:billing_phone", getMeta(u, ["billing_phone"])],
+        ["meta:shipping_phone", getMeta(u, ["shipping_phone"])],
+      ];
+
+      for (const [fieldName, rawValue] of fieldsToCheck) {
+        if (rawValue && normalizePhone(rawValue) === normalized) {
+          matchedRawPhone = rawValue;
+          matchedField = fieldName;
+          return true;
+        }
+      }
+
+      return false;
     });
 
-    if (!user) return null;
+    if (!user) {
+      console.log(
+        `❌ [Auth] هیچ کاربری با شماره ${normalized} در billing/shipping/متادیتا پیدا نشد.`
+      );
+      return null;
+    }
+
+    console.log(
+      `✅ [Auth] کاربر پیدا شد → ID: ${user.id} | نام: ${
+        user.first_name || ""
+      } ${user.last_name || ""} | نقش: ${
+        user.role || "customer"
+      } | فیلد منطبق: ${matchedField} | شماره یافت‌شده: ${matchedRawPhone}`
+    );
 
     return {
       id: user.id,
