@@ -372,9 +372,30 @@ bot.hears("🔙 بازگشت به منوی اصلی", (ctx) => {
 });
 
 // =====================================
+// مدیریت خطاهای غیرمنتظره (جلوگیری از کرش کامل ربات)
+// =====================================
+
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠️ Unhandled Rejection:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("⚠️ Uncaught Exception:", err);
+});
+
+bot.catch((err, ctx) => {
+  console.error(`⚠️ Bot Error [${ctx.updateType}]:`, err);
+});
+
+// =====================================
 // اجرای ربات
 // =====================================
 
-bot.launch();
+bot.launch().catch((err) => {
+  console.error("❌ Launch Error:", err);
+});
 
 console.log("🤖 TAKORG Bot V4 is running...");
+
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));

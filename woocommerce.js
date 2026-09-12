@@ -271,7 +271,7 @@ async function getBestSellingProducts() {
 }
 
 // =====================================
-// دریافت کاربران ووکامرس
+// دریافت کاربران ووکامرس (اصلاح‌شده: همه نقش‌ها)
 // =====================================
 
 async function getAllCustomers() {
@@ -284,6 +284,7 @@ async function getAllCustomers() {
         params: {
           per_page: 100,
           page,
+          role: "all", // <-- بدون این، فقط نقش customer برمی‌گرده
         },
       });
 
