@@ -42,37 +42,21 @@ function showMainMenu(ctx) {
 }
 
 // =====================================
-// دستور تست نقش (فقط برای دیباگ - بعداً حذف کن)
+// درخواست شماره موبایل
 // =====================================
 
-bot.command("checkrole", async (ctx) => {
-  const parts = ctx.message.text.split(" ");
-  const phone = parts[1];
-
-  if (!phone) {
-    return ctx.reply(
-      "لطفاً اینطور بنویس:\n/checkrole 09058531174"
-    );
-  }
-
-  await ctx.reply("🔍 در حال بررسی...");
-
-  const user = await findUserByPhone(phone);
-  const role = getUserRole(user);
-
-  if (!user) {
-    return ctx.reply(
-      `📱 شماره: ${phone}\n❌ هیچ کاربری با این شماره پیدا نشد.`
-    );
-  }
-
+function requestPhone(ctx) {
   return ctx.reply(
-    `📱 شماره: ${phone}\n` +
-    `👤 کاربر پیدا شد: ${user.username}\n` +
-    `🔑 role واقعی تو دیتابیس: ${user.role}\n` +
-    `🎯 role تشخیص‌داده‌شده توسط ربات: ${role}`
+    "📱 برای مشاهده قیمت محصولات، ابتدا شماره موبایل خود را ارسال کنید.",
+    Markup.keyboard([
+      [
+        Markup.button.contactRequest("📱 ارسال شماره موبایل"),
+      ],
+    ])
+      .oneTime()
+      .resize()
   );
-});
+}
 
 // =====================================
 // استارت ربات
@@ -143,7 +127,7 @@ bot.on("contact", async (ctx) => {
       }
     } else {
       await ctx.reply(
-        "ℹ️ شماره شما در لیست کاربران سایت پیدا نشد.\n\n💰 قیمت مشتری برای شما نمایش داده می‌شود."
+        "ℹ️ شماره شما در لیست کاربران سایت پیدا نشد.\n\n💰 قیمت مشتره برای شما نمایش داده می‌شود."
       );
     }
 
