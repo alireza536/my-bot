@@ -10,12 +10,17 @@ const api = axios.create({
     username: process.env.WC_KEY,
     password: process.env.WC_SECRET,
   },
-  timeout: 15000,
+  timeout: 20000,
 });
+
+// حذف تگ‌های HTML
+function clean(text = "") {
+  return text.replace(/<[^>]*>/g, "").toLowerCase();
+}
 
 // ===============================
 // دریافت دسته‌بندی‌ها
-// فقط دسته‌های نهایی (Leaf Categories)
+// فقط دسته‌های نهایی که محصول دارند
 // ===============================
 async function getCategories() {
   try {
@@ -26,7 +31,6 @@ async function getCategories() {
       },
     });
 
-    // فقط دسته‌هایی که زیرشاخه ندارند
     return data.filter((cat) => {
       const hasChild = data.some((item) => item.parent === cat.id);
       return !hasChild && cat.count > 0;
@@ -39,16 +43,13 @@ async function getCategories() {
 
 // ===============================
 // دریافت محصولات یک دسته
-// categoryName = اسم دسته (مثلاً AUX)
 // ===============================
 async function getProductsByCategory(categoryName) {
   try {
-    // پیدا کردن شناسه دسته
     const categories = await getCategories();
 
     const category = categories.find(
-      (cat) =>
-        cat.name.toLowerCase() === categoryName.toLowerCase()
+      (cat) => clean(cat.name) === clean(categoryName)
     );
 
     if (!category) return [];
@@ -69,16 +70,43 @@ async function getProductsByCategory(categoryName) {
 }
 
 // ===============================
-// جستجوی محصول
+// جستجوی محصول (فارسی + انگلیسی + SKU)
 // ===============================
 async function searchProducts(keyword) {
   try {
-    const { data } = await api.get("/products", {
+    const q = keyword.trim().toLowerCase();
+
+    // جستجوی مستقیم ووکامرس
+    let { data } = await api.get("/products", {
       params: {
         search: keyword,
         per_page: 20,
         status: "publish",
       },
+    });
+
+    if (data.length > 0) return data;
+
+    // اگر چیزی پیدا نشد، همه محصولات را بگیر و دستی فیلتر کن
+    const res = await api.get("/products", {
+      params: {
+        per_page: 100,
+        status: "publish",
+      },
+    });
+
+    data = res.data.filter((product) => {
+      const name = clean(product.name);
+      const desc = clean(product.description);
+      const shortDesc = clean(product.short_description);
+      const sku = (product.sku || "").toLowerCase();
+
+      return (
+        name.includes(q) ||
+        desc.includes(q) ||
+        shortDesc.includes(q) ||
+        sku.includes(q)
+      );
     });
 
     return data;
@@ -110,6 +138,26 @@ async function getLatestProducts() {
 }
 
 // ===============================
+// محصولات تخفیف‌دار
+// ===============================
+async function getSaleProducts() {
+  try {
+    const { data } = await api.get("/products", {
+      params: {
+        on_sale: true,
+        per_page: 10,
+        status: "publish",
+      },
+    });
+
+    return data;
+  } catch (err) {
+    console.error("Sale Error:", err.response?.data || err.message);
+    return [];
+  }
+}
+
+// ===============================
 // خروجی توابع
 // ===============================
 module.exports = {
@@ -117,4 +165,5 @@ module.exports = {
   getProductsByCategory,
   searchProducts,
   getLatestProducts,
+  getSaleProducts,
 };
