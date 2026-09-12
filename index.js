@@ -1,14 +1,4 @@
 require("dotenv").config();
-const http = require("http");
-
-http
-  .createServer((req, res) => {
-    res.writeHead(200);
-    res.end("Bot is running");
-  })
-  .listen(process.env.PORT || 3000, () => {
-    console.log("🌐 Health check server is listening on port", process.env.PORT || 3000);
-  });
 
 const { Telegraf, Markup } = require("telegraf");
 
@@ -109,7 +99,15 @@ bot.on("contact", async (ctx) => {
 
     const user = await findUserByPhone(phone);
 
+    // ============================
+    // لاگ موقت برای دیباگ نقش کاربر
+    // (بعد از پیدا کردن مشکل، این خط رو حذف کن)
+    // ============================
+    console.log("USER DATA:", JSON.stringify(user, null, 2));
+
     const role = getUserRole(user);
+
+    console.log("DETECTED ROLE:", role);
 
     users.set(telegramId, {
       phone,
@@ -396,6 +394,24 @@ process.on("uncaughtException", (err) => {
 bot.catch((err, ctx) => {
   console.error(`⚠️ Bot Error [${ctx.updateType}]:`, err);
 });
+
+// =====================================
+// سرور کوچک برای رفع مشکل پورت روی Render
+// =====================================
+
+const http = require("http");
+
+http
+  .createServer((req, res) => {
+    res.writeHead(200);
+    res.end("Bot is running");
+  })
+  .listen(process.env.PORT || 3000, () => {
+    console.log(
+      "🌐 Health check server is listening on port",
+      process.env.PORT || 3000
+    );
+  });
 
 // =====================================
 // اجرای ربات
