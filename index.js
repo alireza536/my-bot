@@ -118,66 +118,6 @@ bot.command("checkrole", async (ctx) => {
   }
 });
 
-// =====================================
-// دریافت شماره موبایل
-// =====================================
-
-bot.on("contact", async (ctx) => {
-  try {
-    const telegramId = ctx.from.id;
-
-    const contact = ctx.message.contact;
-
-    // فقط شماره‌ای که متعلق به خود کاربر است
-    if (contact.user_id && contact.user_id !== telegramId) {
-      return ctx.reply(
-        "❌ لطفاً شماره موبایل خودتان را ارسال کنید."
-      );
-    }
-
-    const phone = contact.phone_number;
-
-    await ctx.reply("🔍 در حال بررسی شماره شما در سایت...");
-
-    const user = await findUserByPhone(phone);
-
-    console.log("USER DATA:", JSON.stringify(user, null, 2));
-
-    const role = getUserRole(user);
-
-    console.log("DETECTED ROLE:", role);
-
-    users.set(telegramId, {
-      phone,
-      user,
-      role,
-    });
-
-    if (user) {
-      if (role === "hamkar") {
-        await ctx.reply(
-          "✅ شماره شما تأیید شد.\n\n👨‍💼 نقش شما: همکار\n\nقیمت‌های همکاری برای شما نمایش داده می‌شود."
-        );
-      } else {
-        await ctx.reply(
-          "✅ شماره شما تأیید شد.\n\n👤 نقش شما: مشتری\n\nقیمت‌های مشتری برای شما نمایش داده می‌شود."
-        );
-      }
-    } else {
-      await ctx.reply(
-        "ℹ️ شماره شما در لیست کاربران سایت پیدا نشد.\n\n💰 قیمت مشتره برای شما نمایش داده می‌شود."
-      );
-    }
-
-    return showMainMenu(ctx);
-  } catch (err) {
-    console.error("Contact Error:", err.message);
-
-    return ctx.reply(
-      "❌ خطا در بررسی شماره. لطفاً دوباره تلاش کنید."
-    );
-  }
-});
 
 // =====================================
 // مشاهده دسته‌بندی‌ها
