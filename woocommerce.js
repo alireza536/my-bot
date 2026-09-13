@@ -544,28 +544,28 @@ function getUserRole(user) {
 // =====================================
 
 function getProductPrice(product, role = "customer") {
-  let price = product.price;
+  // قیمت مشتری
+  let customerPrice = product.sale_price || product.regular_price || product.price;
 
-  if (role === "hamkar") {
-    const hamkarPrice = getMeta(product, [
-      // کلیدهای واقعی که با Inspect روی خود سایت TAKORG پیدا شدن
-      "_tak_partner_sale_price", // قیمت فروش ویژه همکاری (در صورت وجود، اولویت داره)
-      "_tak_partner_price", // قیمت همکاری
-      // کلیدهای احتمالی قدیمی (برای اطمینان، اگه جایی استفاده شده باشن)
-      "_hamkar_price",
-      "_wholesale_price",
-      "_price_role_hamkar",
-      "wholesale_customer_wholesale_price",
-      "wholesale_price",
-      "_employee_price",
-    ]);
-
-    if (hamkarPrice) {
-      price = hamkarPrice;
-    }
+  // اگر همکار نیست، همان قیمت مشتری را برگردان
+  if (role !== "hamkar") {
+    return Number(customerPrice || 0);
   }
 
-  return Number(price || 0);
+  // قیمت همکاری از متای سفارشی
+  const hamkarPrice = getMeta(product, [
+    "_hamkar_price",
+    "_price_role_hamkar",
+    "_wholesale_price"
+  ]);
+
+  // اگر قیمت همکاری وجود داشت، همان را نمایش بده
+  if (hamkarPrice) {
+    return Number(hamkarPrice);
+  }
+
+  // در غیر این صورت قیمت مشتری
+  return Number(customerPrice || 0);
 }
 
 // =====================================
