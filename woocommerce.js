@@ -69,6 +69,24 @@ function getMeta(product, keys = []) {
 }
 
 // =====================================
+// لیست دستی شماره‌های همکار
+// برای همکارهایی که هنوز روی سایت حساب کاربری
+// نساخته‌اند (یا نقششان درست ثبت نشده) ولی باید
+// قیمت همکاری ببینند. شماره‌ها را در متغیر محیطی
+// HAMKAR_PHONES با کاما از هم جدا کن، مثلاً:
+// HAMKAR_PHONES=09121111111,09122222222,+989123334455
+// =====================================
+
+const HAMKAR_PHONES = (process.env.HAMKAR_PHONES || "")
+  .split(",")
+  .map((p) => normalizePhone(p.trim()))
+  .filter(Boolean);
+
+function isManualHamkar(normalizedPhone) {
+  return HAMKAR_PHONES.includes(normalizedPhone);
+}
+
+// =====================================
 // دریافت دسته‌بندی‌ها
 // =====================================
 
@@ -428,10 +446,31 @@ async function findUserByPhone(phone) {
     }
 
     console.log(
-      `⚠️ [Auth] شماره ${normalized} در بین ${users.length} کاربر ثبت‌نام‌شده پیدا نشد؛ حالا سفارش‌ها (شامل مهمان) بررسی می‌شود...`
+      `⚠️ [Auth] شماره ${normalized} در بین ${users.length} کاربر ثبت‌نام‌شده پیدا نشد؛ حالا لیست دستی همکارها بررسی می‌شود...`
     );
 
-    // فالبک: شاید کاربر حساب کاربری نساخته و فقط به‌صورت
+    // فالبک ۱: لیست دستی همکارهایی که هنوز حساب کاربری نساخته‌اند
+    if (isManualHamkar(normalized)) {
+      console.log(
+        `✅ [Auth] شماره ${normalized} توی لیست دستی همکارها (HAMKAR_PHONES) پیدا شد.`
+      );
+
+      return {
+        id: null,
+        username: null,
+        email: null,
+        role: "hamkar",
+        firstName: null,
+        lastName: null,
+        phone: normalized,
+      };
+    }
+
+    console.log(
+      `⚠️ [Auth] شماره ${normalized} توی لیست دستی همکارها هم نبود؛ حالا سفارش‌ها (شامل مهمان) بررسی می‌شود...`
+    );
+
+    // فالبک ۲: شاید کاربر حساب کاربری نساخته و فقط به‌صورت
     // مهمان (guest) سفارش ثبت کرده — این حالت در /customers نیست
     const order = await findOrderByPhone(normalized);
 
@@ -503,6 +542,10 @@ function getProductPrice(product, role = "customer") {
 
   if (role === "hamkar") {
     const hamkarPrice = getMeta(product, [
+      // کلیدهای واقعی که با Inspect روی خود سایت TAKORG پیدا شدن
+      "_tak_partner_sale_price", // قیمت فروش ویژه همکاری (در صورت وجود، اولویت داره)
+      "_tak_partner_price", // قیمت همکاری
+      // کلیدهای احتمالی قدیمی (برای اطمینان، اگه جایی استفاده شده باشن)
       "_hamkar_price",
       "_wholesale_price",
       "_price_role_hamkar",
