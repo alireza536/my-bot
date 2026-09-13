@@ -308,6 +308,10 @@ async function getAllCustomers() {
         params: {
           per_page: 100,
           page,
+          // پیش‌فرض ووکامرس فقط role=customer رو برمی‌گردونه؛
+          // با role=all کاربرهایی با نقش‌های دیگه (مثل همکار،
+          // wholesale_customer، shop_manager و ...) هم لحاظ می‌شن.
+          role: "all",
         },
       });
 
@@ -316,6 +320,8 @@ async function getAllCustomers() {
       if (data.length < 100) break;
       page++;
     }
+
+    console.log(`👥 [WooCommerce] تعداد کل کاربران دریافت‌شده (role=all): ${allUsers.length}`);
 
     return allUsers;
   } catch (err) {

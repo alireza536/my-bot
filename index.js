@@ -202,6 +202,14 @@ async function sendProduct(ctx, product) {
 
   const price = getProductPrice(product, role);
 
+  console.log(
+    `🐞 [Debug Price] محصول: ${product.name} | telegramId: ${telegramId} | ` +
+      `userData.role: ${userData?.role} | role نهایی: ${role} | ` +
+      `regular_price: ${product.regular_price} | sale_price: ${product.sale_price} | ` +
+      `product.price (خام از API): ${product.price} | ` +
+      `قیمت محاسبه‌شده نهایی: ${price}`
+  );
+
   const priceText = formatPrice(price);
 
   const shortDescription = String(
