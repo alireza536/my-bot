@@ -310,6 +310,51 @@ async function getAllCustomers() {
 }
 
 // =====================================
+// جستجوی شماره در سفارش‌ها (شامل سفارش‌های مهمان/guest)
+// این تابع وقتی اجرا می‌شود که شماره در بین کاربران
+// ثبت‌نام‌شده (/customers) پیدا نشود؛ چون کسی که فقط
+// «مهمان» سفارش داده باشد اصلاً در /customers نیست ولی
+// شماره‌اش در billing سفارش ثبت شده.
+// =====================================
+
+async function findOrderByPhone(normalizedPhone) {
+  try {
+    let page = 1;
+    const maxPages = 5; // حداکثر ۵۰۰ سفارش اخیر بررسی می‌شود
+
+    while (page <= maxPages) {
+      const { data } = await api.get("/orders", {
+        params: {
+          per_page: 100,
+          page,
+          orderby: "date",
+          order: "desc",
+        },
+      });
+
+      if (!data.length) break;
+
+      const order = data.find(
+        (o) => normalizePhone(o.billing?.phone || "") === normalizedPhone
+      );
+
+      if (order) return order;
+
+      if (data.length < 100) break;
+      page++;
+    }
+
+    return null;
+  } catch (err) {
+    console.error(
+      "Order Search Error:",
+      err.response?.data || err.message
+    );
+    return null;
+  }
+}
+
+// =====================================
 // پیدا کردن کاربر بر اساس شماره موبایل
 // (billing.phone و shipping.phone هر دو بررسی می‌شوند)
 // =====================================
@@ -339,7 +384,7 @@ async function findUserByPhone(phone) {
     const user = users.find((u) => {
       // ترتیب اولویت بررسی شماره:
       // 1) billing.phone  2) shipping.phone
-      // 3) متادیتای mobile / phone / billing_phone / shipping_phone
+      // 3) متادیتای mobile / phone / billing_phone / shipping_phone / digits_phone(_no)
       const fieldsToCheck = [
         ["billing.phone", u.billing?.phone],
         ["shipping.phone", u.shipping?.phone],
@@ -362,28 +407,54 @@ async function findUserByPhone(phone) {
       return false;
     });
 
-    if (!user) {
+    if (user) {
       console.log(
-        `❌ [Auth] هیچ کاربری با شماره ${normalized} در billing/shipping/متادیتا پیدا نشد.`
+        `✅ [Auth] کاربر پیدا شد (از /customers) → ID: ${user.id} | نام: ${
+          user.first_name || ""
+        } ${user.last_name || ""} | نقش: ${
+          user.role || "customer"
+        } | فیلد منطبق: ${matchedField} | شماره یافت‌شده: ${matchedRawPhone}`
+      );
+
+      return {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role || "customer",
+        firstName: user.first_name,
+        lastName: user.last_name,
+        phone: normalized,
+      };
+    }
+
+    console.log(
+      `⚠️ [Auth] شماره ${normalized} در بین ${users.length} کاربر ثبت‌نام‌شده پیدا نشد؛ حالا سفارش‌ها (شامل مهمان) بررسی می‌شود...`
+    );
+
+    // فالبک: شاید کاربر حساب کاربری نساخته و فقط به‌صورت
+    // مهمان (guest) سفارش ثبت کرده — این حالت در /customers نیست
+    const order = await findOrderByPhone(normalized);
+
+    if (!order) {
+      console.log(
+        `❌ [Auth] شماره ${normalized} نه در کاربران ثبت‌نام‌شده و نه در سفارش‌های اخیر پیدا نشد.`
       );
       return null;
     }
 
     console.log(
-      `✅ [Auth] کاربر پیدا شد → ID: ${user.id} | نام: ${
-        user.first_name || ""
-      } ${user.last_name || ""} | نقش: ${
-        user.role || "customer"
-      } | فیلد منطبق: ${matchedField} | شماره یافت‌شده: ${matchedRawPhone}`
+      `✅ [Auth] کاربر از طریق سفارش مهمان پیدا شد → Order ID: ${order.id} | نام: ${
+        order.billing?.first_name || ""
+      } ${order.billing?.last_name || ""} | شماره: ${order.billing?.phone}`
     );
 
     return {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      role: user.role || "customer",
-      firstName: user.first_name,
-      lastName: user.last_name,
+      id: order.customer_id || null,
+      username: null,
+      email: order.billing?.email || null,
+      role: "customer",
+      firstName: order.billing?.first_name || null,
+      lastName: order.billing?.last_name || null,
       phone: normalized,
     };
   } catch (err) {
