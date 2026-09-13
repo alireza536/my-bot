@@ -454,6 +454,39 @@ http
   });
 
 // =====================================
+// خودپینگ (Self-Ping) برای جلوگیری از خوابیدن
+// سرویس رایگان Render
+// روی Render، متغیر RENDER_EXTERNAL_URL به‌صورت
+// خودکار ست می‌شود؛ اگر روی هاست دیگری هستید،
+// آن را در .env با کلید SELF_URL مقدار دهی کنید.
+// =====================================
+
+const SELF_URL =
+  process.env.RENDER_EXTERNAL_URL || process.env.SELF_URL || null;
+
+if (SELF_URL) {
+  const https = require("https");
+
+  const PING_INTERVAL_MS = 5 * 60 * 1000; // هر ۵ دقیقه
+
+  setInterval(() => {
+    https
+      .get(SELF_URL, (res) => {
+        console.log(`🔄 Self-ping انجام شد. Status: ${res.statusCode}`);
+      })
+      .on("error", (err) => {
+        console.error("⚠️ Self-ping Error:", err.message);
+      });
+  }, PING_INTERVAL_MS);
+
+  console.log(`🔁 Self-ping فعال شد روی: ${SELF_URL}`);
+} else {
+  console.log(
+    "ℹ️ Self-ping غیرفعال است (SELF_URL یا RENDER_EXTERNAL_URL تنظیم نشده)."
+  );
+}
+
+// =====================================
 // اجرای ربات
 // =====================================
 
