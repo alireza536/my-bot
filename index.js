@@ -11,7 +11,14 @@ const {
   getProductPrice,
   formatPrice,
   normalizePhone,
+  getAllProducts,
+  getMeta,
+  HAMKAR_PRICE_KEYS,
 } = require("./woocommerce");
+
+// آیدی عددی تلگرام مدیر (برای دسترسی به دستورات مخفی مثل /priceaudit)
+// این عدد رو از لاگ‌های قبلی ربات (بخش [Telegram] ... telegramId) پیدا کردم.
+const ADMIN_TELEGRAM_ID = 6122044844;
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
@@ -68,29 +75,14 @@ function requestPhone(ctx) {
 bot.start(async (ctx) => {
   const telegramId = ctx.from.id;
 
-  const existing = users.get(telegramId);
-
-  // اگر کاربر قبلاً در همین اجرا شماره‌اش را ارسال و تأیید کرده،
-  // دیگر شماره نخواه و مستقیم منوی اصلی را نشان بده.
-  if (existing) {
-    const name = existing.firstName ? `${existing.firstName} عزیز، ` : "";
-
-    await ctx.reply(
-      `🛍 *${name}به فروشگاه TAKORG خوش آمدید*`,
-      { parse_mode: "Markdown" }
-    );
-
-    return showMainMenu(ctx);
-  }
-
   searchMode.delete(telegramId);
 
   await ctx.reply(
-    "🛍 *به فروشگاه TAKORG خوش آمدید*\n\nبرای شروع، شماره موبایل خود را ارسال کنید.",
+    "🛍 *به فروشگاه TAKORG خوش آمدید*",
     { parse_mode: "Markdown" }
   );
 
-  return requestPhone(ctx);
+  return showMainMenu(ctx);
 });
 
 // =====================================
@@ -168,10 +160,6 @@ bot.on("contact", async (ctx) => {
 
 bot.hears("🛍 مشاهده محصولات", async (ctx) => {
   try {
-    if (!users.has(ctx.from.id)) {
-      return requestPhone(ctx);
-    }
-
     const categories = await getCategories();
 
     const buttons = categories.map((cat) => [cat.name]);
@@ -190,6 +178,67 @@ bot.hears("🛍 مشاهده محصولات", async (ctx) => {
 });
 
 // =====================================
+// ممیزی قیمت (فقط برای مدیر)
+// محصولاتی که قیمت اصلی‌شون با قیمت
+// همکاری‌شون برابر یا کمتره رو لیست می‌کنه
+// (یعنی جایی که احتمالاً اشتباه ثبت شده)
+// =====================================
+
+bot.command("priceaudit", async (ctx) => {
+  if (ctx.from.id !== ADMIN_TELEGRAM_ID) {
+    return; // بی‌صدا نادیده بگیر، این دستور مخفیه
+  }
+
+  await ctx.reply("⏳ در حال بررسی همه محصولات، چند لحظه صبر کن...");
+
+  try {
+    const products = await getAllProducts();
+
+    const problems = [];
+
+    for (const product of products) {
+      const regularPrice = Number(product.regular_price || product.price || 0);
+
+      const hamkarPriceRaw = getMeta(product, HAMKAR_PRICE_KEYS);
+
+      if (!hamkarPriceRaw) continue; // قیمت همکاری اصلاً ثبت نشده، فعلاً کاری نداریم
+
+      const hamkarPrice = Number(hamkarPriceRaw);
+
+      if (regularPrice > 0 && hamkarPrice > 0 && regularPrice <= hamkarPrice) {
+        problems.push(
+          `• ${product.name}\n   مشتری: ${formatPrice(regularPrice)} | همکار: ${formatPrice(hamkarPrice)}\n   ویرایش: ${product.permalink}`
+        );
+      }
+    }
+
+    if (!problems.length) {
+      return ctx.reply(
+        `✅ بررسی ${products.length} محصول انجام شد. هیچ محصولی با قیمت اشتباه (مشتری ≤ همکار) پیدا نشد.`
+      );
+    }
+
+    await ctx.reply(
+      `⚠️ از ${products.length} محصول، ${problems.length} محصول قیمت مشتری‌شون کمتر یا مساوی قیمت همکاری‌شونه:`
+    );
+
+    // تلگرام پیام‌های خیلی بلند رو رد می‌کنه، پس تکه‌تکه می‌فرستیم
+    let chunk = "";
+    for (const line of problems) {
+      if ((chunk + line).length > 3500) {
+        await ctx.reply(chunk);
+        chunk = "";
+      }
+      chunk += line + "\n\n";
+    }
+    if (chunk) await ctx.reply(chunk);
+  } catch (err) {
+    console.error("Price Audit Error:", err.message);
+    return ctx.reply("❌ خطا در ممیزی قیمت: " + err.message);
+  }
+});
+
+// =====================================
 // نمایش محصول با قیمت نقش
 // =====================================
 
@@ -198,7 +247,8 @@ async function sendProduct(ctx, product) {
 
   const userData = users.get(telegramId);
 
-  const role = userData?.role || "guest";
+  // احراز هویت اولیه حذف شده؛ همه کاربرها قیمت همکاری می‌بینند.
+  const role = "hamkar";
 
   const price = getProductPrice(product, role);
 
@@ -271,10 +321,6 @@ bot.on("text", async (ctx, next) => {
     return next();
   }
 
-  if (!users.has(ctx.from.id)) {
-    return requestPhone(ctx);
-  }
-
   // حالت جستجو
   if (searchMode.get(ctx.from.id)) {
     try {
@@ -317,10 +363,6 @@ bot.on("text", async (ctx, next) => {
 // =====================================
 
 bot.hears("🔍 جستجوی محصول", (ctx) => {
-  if (!users.has(ctx.from.id)) {
-    return requestPhone(ctx);
-  }
-
   searchMode.set(ctx.from.id, true);
 
   return ctx.reply(
