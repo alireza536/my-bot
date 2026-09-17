@@ -214,7 +214,9 @@ bot.hears("📄 دریافت لیست کامل محصولات", async (ctx) => {
       filename: "TAKORG-Products.pdf",
     });
 
-    await ctx.reply("✅ فایل لیست محصولات آماده و ارسال شد.");
+    await ctx.reply(
+      "✅ فایل لیست محصولات آماده و ارسال شد.\n\n⚠️ به دلیل نوسانات قیمت، لطفاً از به‌روز بودن قیمت‌های فایل با سایت اطمینان حاصل کنید."
+    );
   } catch (err) {
     console.error("❌ PDF Send Error:", err);
 
