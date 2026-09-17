@@ -87,6 +87,19 @@ function isManualHamkar(normalizedPhone) {
 }
 
 // =====================================
+// کلیدهای متا که ممکن است قیمت همکاری
+// (wholesale/hamkar) در آن‌ها ذخیره شده باشد.
+// این آرایه هم در getProductPrice و هم در
+// دستور /priceaudit و ساخت PDF استفاده می‌شود.
+// =====================================
+
+const HAMKAR_PRICE_KEYS = [
+  "_hamkar_price",
+  "_price_role_hamkar",
+  "_wholesale_price",
+];
+
+// =====================================
 // دریافت دسته‌بندی‌ها
 // =====================================
 
@@ -287,6 +300,57 @@ async function getBestSellingProducts() {
   } catch (err) {
     console.error(
       "Best Seller Error:",
+      err.response?.data || err.message
+    );
+
+    return [];
+  }
+}
+
+// =====================================
+// دریافت تمام محصولات (برای PDF و ممیزی قیمت)
+// چون API ووکامرس هر بار حداکثر ۱۰۰ محصول برمی‌گرداند،
+// اینجا تمام صفحات را پشت‌سرهم می‌خوانیم تا فروشگاه‌هایی
+// با بیش از ۱۰۰ محصول هم کامل پوشش داده شوند.
+// فقط محصولات منتشرشده و موجود و غیرِمخفی برگردانده می‌شوند.
+// =====================================
+
+async function getAllProducts() {
+  try {
+    let page = 1;
+    let allProducts = [];
+
+    while (true) {
+      const { data } = await api.get("/products", {
+        params: {
+          per_page: 100,
+          page,
+          status: "publish",
+        },
+      });
+
+      if (!data.length) break;
+
+      allProducts.push(...data);
+
+      if (data.length < 100) break;
+      page++;
+    }
+
+    const filtered = allProducts.filter(
+      (product) =>
+        product.stock_status === "instock" &&
+        product.catalog_visibility !== "hidden"
+    );
+
+    console.log(
+      `📦 [WooCommerce] تعداد کل محصولات دریافت‌شده: ${allProducts.length} | موجود و قابل‌نمایش: ${filtered.length}`
+    );
+
+    return filtered;
+  } catch (err) {
+    console.error(
+      "Get All Products Error:",
       err.response?.data || err.message
     );
 
@@ -553,11 +617,7 @@ function getProductPrice(product, role = "customer") {
   }
 
   // قیمت همکاری از متای سفارشی
-  const hamkarPrice = getMeta(product, [
-    "_hamkar_price",
-    "_price_role_hamkar",
-    "_wholesale_price"
-  ]);
+  const hamkarPrice = getMeta(product, HAMKAR_PRICE_KEYS);
 
   // اگر قیمت همکاری وجود داشت، همان را نمایش بده
   if (hamkarPrice) {
@@ -587,9 +647,12 @@ module.exports = {
   getLatestProducts,
   getSaleProducts,
   getBestSellingProducts,
+  getAllProducts,
   findUserByPhone,
   getUserRole,
   getProductPrice,
   formatPrice,
   normalizePhone,
+  getMeta,
+  HAMKAR_PRICE_KEYS,
 };
