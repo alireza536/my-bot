@@ -73,19 +73,14 @@ function requestPhone(ctx) {
 
 // =====================================
 // فایل PDF ثابت لیست محصولات
-// این فایل رو خودتون باید توی مسیر زیر توی گیت‌هاب
-// آپلود کنید (از GitHub وب: Add file > Upload files):
-// files/TAKORG-Products.pdf
+// فایل باید کنار همین index.js (توی ریشهٔ پروژه) باشه:
+// TAKORG-Products.pdf
 // هر وقت خواستید محتواش رو عوض کنید، کافیه همین فایل رو
 // با فایل جدید جایگزین (Upload/overwrite) کنید؛ کد نیازی
 // به تغییر نداره.
 // =====================================
 
-const PRODUCTS_PDF_PATH = path.join(
-  __dirname,
-  "files",
-  "TAKORG-Products.pdf"
-);
+const PRODUCTS_PDF_PATH = path.join(__dirname, "TAKORG-Products.pdf");
 
 // =====================================
 // استارت ربات
