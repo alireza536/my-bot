@@ -3,7 +3,6 @@ require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
 const fs = require("fs");
 const path = require("path");
-const PDFDocument = require("pdfkit");
 
 const {
   getCategories,
@@ -73,148 +72,20 @@ function requestPhone(ctx) {
 }
 
 // =====================================
-// ساخت PDF لیست کامل محصولات
+// فایل PDF ثابت لیست محصولات
+// این فایل رو خودتون باید توی مسیر زیر توی گیت‌هاب
+// آپلود کنید (از GitHub وب: Add file > Upload files):
+// files/TAKORG-Products.pdf
+// هر وقت خواستید محتواش رو عوض کنید، کافیه همین فایل رو
+// با فایل جدید جایگزین (Upload/overwrite) کنید؛ کد نیازی
+// به تغییر نداره.
 // =====================================
 
-// فونت فارسی مورد نیاز برای نمایش صحیح حروف فارسی در PDF.
-// چون فونت‌های پیش‌فرض pdfkit (Helvetica و ...) اصلاً گلیف
-// فارسی/عربی ندارند، باید یک فایل فونت TTF فارسی (مثلاً
-// Vazirmatn-Regular.ttf) در مسیر زیر قرار بگیرد:
-// fonts/Vazirmatn-Regular.ttf (کنار همین فایل index.js)
-const PERSIAN_FONT_PATH = path.join(__dirname, "fonts", "ttf", "Vazirmatn-Regular.ttf");
-
-// pdfkit هیچ شکل‌دهی (shaping) یا بازآرایی راست‌به‌چپ برای
-// حروف فارسی/عربی انجام نمی‌دهد و متن را همیشه از چپ به راست
-// رسم می‌کند. برای اینکه ترتیب کلمات و حروفِ فارسی روی صفحه
-// درست دیده شود (بدون نیاز به کتابخانه شکل‌دهی جداگانه)،
-// هر خط را کلمه‌به‌کلمه بررسی می‌کنیم: کلماتی که حرف فارسی
-// دارند معکوس می‌شوند و سپس کل ترتیب کلمات هم معکوس می‌شود.
-// اعداد، SKU و لینک (که فارسی نیستند) دست‌نخورده باقی می‌مانند.
-const PERSIAN_LETTER_REGEX =
-  /[\u0621-\u064A\u067E\u0686\u0698\u06A9\u06AF\u06CC\u06CE]/;
-
-function reshapeToken(token) {
-  return PERSIAN_LETTER_REGEX.test(token)
-    ? token.split("").reverse().join("")
-    : token;
-}
-
-function rtl(text = "") {
-  return String(text)
-    .split(" ")
-    .map(reshapeToken)
-    .reverse()
-    .join(" ");
-}
-
-// تولید فایل PDF لیست کامل محصولات بر اساس نقش کاربر (hamkar/customer)
-// خروجی: مسیر فایل PDF ساخته‌شده روی دیسک
-function generateProductsPDF(role, outputPath) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const products = await getAllProducts();
-
-      const doc = new PDFDocument({ margin: 40, size: "A4" });
-      const stream = fs.createWriteStream(outputPath);
-      doc.pipe(stream);
-
-      const hasPersianFont = fs.existsSync(PERSIAN_FONT_PATH);
-
-      if (hasPersianFont) {
-        doc.registerFont("Persian", PERSIAN_FONT_PATH);
-        doc.font("Persian");
-      } else {
-        console.warn(
-          "⚠️ فونت فارسی در مسیر fonts/Vazirmatn-Regular.ttf پیدا نشد؛ " +
-            "بدون این فونت متن فارسی در PDF به‌درستی نمایش داده نمی‌شود. " +
-            "لطفاً یک فایل فونت فارسی TTF در پوشه fonts/ پروژه قرار دهید."
-        );
-      }
-
-      // عنوان
-      doc.fontSize(18).text(rtl("TAKORG — لیست کامل محصولات"), {
-        align: "center",
-      });
-
-      doc.moveDown(0.3);
-
-      const now = new Date();
-      const dateStr =
-        now.toLocaleDateString("fa-IR") + " - " + now.toLocaleTimeString("fa-IR");
-
-      doc.fontSize(10).text(rtl(`تاریخ تولید فایل: ${dateStr}`), {
-        align: "center",
-      });
-
-      doc.moveDown();
-      doc
-        .moveTo(40, doc.y)
-        .lineTo(555, doc.y)
-        .strokeColor("#999999")
-        .stroke();
-      doc.moveDown();
-
-      if (!products.length) {
-        doc
-          .fontSize(12)
-          .text(rtl("هیچ محصول موجودی برای نمایش یافت نشد."), {
-            align: "right",
-          });
-      }
-
-      for (const product of products) {
-        // اگر نزدیک انتهای صفحه بودیم، صفحه جدید باز کن
-        if (doc.y > 720) {
-          doc.addPage();
-        }
-
-        const price = getProductPrice(product, role);
-        const priceText = formatPrice(price);
-        const sku =
-          product.sku && String(product.sku).trim()
-            ? product.sku
-            : "—";
-        const categoryNames =
-          (product.categories || []).map((c) => c.name).join("، ") || "—";
-        const link = product.permalink || "";
-
-        doc
-          .fontSize(13)
-          .fillColor("#111111")
-          .text(rtl(`نام محصول: ${product.name}`), { align: "right" });
-
-        doc
-          .fontSize(11)
-          .fillColor("#333333")
-          .text(rtl(`کد کالا: ${sku}`), { align: "right" })
-          .text(rtl(`دسته‌بندی: ${categoryNames}`), { align: "right" })
-          .text(rtl(`قیمت: ${priceText} تومان`), { align: "right" });
-
-        if (link) {
-          doc
-            .fillColor("#1155cc")
-            .text(link, { align: "left", link, underline: true })
-            .fillColor("#333333");
-        }
-
-        doc.moveDown(0.4);
-        doc
-          .moveTo(40, doc.y)
-          .lineTo(555, doc.y)
-          .strokeColor("#dddddd")
-          .stroke();
-        doc.moveDown(0.6);
-      }
-
-      doc.end();
-
-      stream.on("finish", () => resolve(outputPath));
-      stream.on("error", (err) => reject(err));
-    } catch (err) {
-      reject(err);
-    }
-  });
-}
+const PRODUCTS_PDF_PATH = path.join(
+  __dirname,
+  "files",
+  "TAKORG-Products.pdf"
+);
 
 // =====================================
 // استارت ربات
@@ -330,42 +201,31 @@ bot.hears("🛍 مشاهده محصولات", async (ctx) => {
 // =====================================
 
 bot.hears("📄 دریافت لیست کامل محصولات", async (ctx) => {
-  const telegramId = ctx.from.id;
-  const userData = users.get(telegramId);
-  const role = userData?.role === "hamkar" ? "hamkar" : "customer";
-
-  let filePath = null;
-
   try {
+    if (!fs.existsSync(PRODUCTS_PDF_PATH)) {
+      console.error(
+        `❌ فایل PDF پیدا نشد: ${PRODUCTS_PDF_PATH} — باید این فایل رو توی گیت‌هاب آپلود کنید.`
+      );
+
+      return ctx.reply(
+        "❌ فایل لیست محصولات هنوز روی سرور آپلود نشده. لطفاً بعداً دوباره تلاش کنید."
+      );
+    }
+
     await ctx.reply("⏳ در حال آماده‌سازی فایل PDF...");
 
-    filePath = path.join(
-      __dirname,
-      `takorg-products-${telegramId}-${Date.now()}.pdf`
-    );
-
-    await generateProductsPDF(role, filePath);
-
     await ctx.replyWithDocument({
-      source: filePath,
+      source: PRODUCTS_PDF_PATH,
       filename: "TAKORG-Products.pdf",
     });
 
     await ctx.reply("✅ فایل لیست محصولات آماده و ارسال شد.");
   } catch (err) {
-    console.error("❌ PDF Generation Error:", err);
+    console.error("❌ PDF Send Error:", err);
 
     return ctx.reply(
-      "❌ خطا در ساخت فایل PDF. لطفاً دوباره تلاش کنید."
+      "❌ خطا در ارسال فایل PDF. لطفاً دوباره تلاش کنید."
     );
-  } finally {
-    if (filePath && fs.existsSync(filePath)) {
-      fs.unlink(filePath, (err) => {
-        if (err) {
-          console.error("⚠️ خطا در حذف فایل موقت PDF:", err.message);
-        }
-      });
-    }
   }
 });
 
