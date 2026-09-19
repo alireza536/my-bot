@@ -18,6 +18,8 @@ const {
   HAMKAR_PRICE_KEYS,
 } = require("./woocommerce");
 
+const { saveUsers, loadUsers } = require("./store");
+
 // آیدی عددی تلگرام مدیر (برای دسترسی به دستورات مخفی مثل /priceaudit)
 // این عدد رو از لاگ‌های قبلی ربات (بخش [Telegram] ... telegramId) پیدا کردم.
 const ADMIN_TELEGRAM_ID = 6122044844;
@@ -141,6 +143,10 @@ bot.on("contact", async (ctx) => {
       lastName: user?.lastName || null,
       user,
     });
+
+    // ذخیرهٔ ماندگار (بی‌صدا در پس‌زمینه؛ اگه شکست بخوره
+    // ربات همچنان با حافظهٔ موقت کار می‌کنه)
+    saveUsers(users);
 
     if (user) {
       if (role === "hamkar") {
@@ -590,11 +596,22 @@ if (SELF_URL) {
 // اجرای ربات
 // =====================================
 
-bot.launch().catch((err) => {
-  console.error("❌ Launch Error:", err);
-});
+(async () => {
+  try {
+    const restoredUsers = await loadUsers();
+    for (const [telegramId, userData] of restoredUsers.entries()) {
+      users.set(telegramId, userData);
+    }
+  } catch (err) {
+    console.error("⚠️ خطا در بارگذاری کاربرهای ذخیره‌شده:", err.message);
+  }
 
-console.log("🤖 TAKORG Bot V4 is running...");
+  bot.launch().catch((err) => {
+    console.error("❌ Launch Error:", err);
+  });
+
+  console.log("🤖 TAKORG Bot V4 is running...");
+})();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
