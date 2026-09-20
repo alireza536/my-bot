@@ -87,19 +87,6 @@ function isManualHamkar(normalizedPhone) {
 }
 
 // =====================================
-// کلیدهای متا که ممکن است قیمت همکاری
-// (wholesale/hamkar) در آن‌ها ذخیره شده باشد.
-// این آرایه هم در getProductPrice و هم در
-// دستور /priceaudit و ساخت PDF استفاده می‌شود.
-// =====================================
-
-const HAMKAR_PRICE_KEYS = [
-  "_hamkar_price",
-  "_price_role_hamkar",
-  "_wholesale_price",
-];
-
-// =====================================
 // دریافت دسته‌بندی‌ها
 // =====================================
 
@@ -308,14 +295,15 @@ async function getBestSellingProducts() {
 }
 
 // =====================================
-// دریافت تمام محصولات (برای PDF و ممیزی قیمت)
-// چون API ووکامرس هر بار حداکثر ۱۰۰ محصول برمی‌گرداند،
-// اینجا تمام صفحات را پشت‌سرهم می‌خوانیم تا فروشگاه‌هایی
-// با بیش از ۱۰۰ محصول هم کامل پوشش داده شوند.
-// فقط محصولات منتشرشده و موجود و غیرِمخفی برگردانده می‌شوند.
+// دریافت کاربران ووکامرس (همه صفحات)
 // =====================================
 
-async function getAllProducts() {
+// =====================================
+// دریافت همهٔ محصولات (صفحه‌بندی‌شده)
+// برای استفاده در ابزار ممیزی قیمت
+// =====================================
+
+async function getAllProducts(extraParams = {}) {
   try {
     let page = 1;
     let allProducts = [];
@@ -326,10 +314,9 @@ async function getAllProducts() {
           per_page: 100,
           page,
           status: "publish",
+          ...extraParams,
         },
       });
-
-      if (!data.length) break;
 
       allProducts.push(...data);
 
@@ -337,30 +324,15 @@ async function getAllProducts() {
       page++;
     }
 
-    const filtered = allProducts.filter(
-      (product) =>
-        product.stock_status === "instock" &&
-        product.catalog_visibility !== "hidden"
-    );
-
-    console.log(
-      `📦 [WooCommerce] تعداد کل محصولات دریافت‌شده: ${allProducts.length} | موجود و قابل‌نمایش: ${filtered.length}`
-    );
-
-    return filtered;
+    return allProducts;
   } catch (err) {
     console.error(
-      "Get All Products Error:",
+      "Products Error:",
       err.response?.data || err.message
     );
-
     return [];
   }
 }
-
-// =====================================
-// دریافت کاربران ووکامرس (همه صفحات)
-// =====================================
 
 async function getAllCustomers() {
   try {
@@ -404,6 +376,57 @@ async function getAllCustomers() {
 // «مهمان» سفارش داده باشد اصلاً در /customers نیست ولی
 // شماره‌اش در billing سفارش ثبت شده.
 // =====================================
+
+// =====================================
+// برچسب فارسی وضعیت سفارش
+// =====================================
+
+const ORDER_STATUS_LABELS = {
+  pending: "⏳ در انتظار پرداخت",
+  processing: "🔄 در حال پردازش",
+  "on-hold": "⏸ در انتظار (نگه‌داشته‌شده)",
+  completed: "✅ تکمیل و ارسال‌شده",
+  cancelled: "❌ لغو شده",
+  refunded: "↩️ مسترد شده",
+  failed: "⚠️ پرداخت ناموفق",
+  trash: "🗑 حذف‌شده",
+  checkout_draft: "📝 پیش‌نویس (ثبت نشده)",
+};
+
+function getOrderStatusLabel(status) {
+  return ORDER_STATUS_LABELS[status] || status;
+}
+
+// =====================================
+// پیدا کردن یک سفارش خاص با شماره سفارش،
+// مشروط به تطبیق شماره موبایل (برای امنیت،
+// تا کسی نتونه فقط با حدس زدن کد، سفارش
+// دیگران رو ببینه)
+// =====================================
+
+async function getOrderByIdAndPhone(orderId, normalizedPhone) {
+  try {
+    const { data: order } = await api.get(`/orders/${orderId}`);
+
+    const orderPhone = normalizePhone(order.billing?.phone || "");
+
+    if (orderPhone !== normalizedPhone) {
+      return null;
+    }
+
+    return order;
+  } catch (err) {
+    if (err.response?.status === 404) {
+      return null;
+    }
+
+    console.error(
+      "Order Lookup Error:",
+      err.response?.data || err.message
+    );
+    return null;
+  }
+}
 
 async function findOrderByPhone(normalizedPhone) {
   try {
@@ -607,25 +630,31 @@ function getUserRole(user) {
 // ترتیب اولویت کلیدهای Meta برای قیمت همکار
 // =====================================
 
+const HAMKAR_PRICE_KEYS = [
+  // کلیدهای واقعی که با Inspect روی خود سایت TAKORG پیدا شدن
+  "_tak_partner_sale_price", // قیمت فروش ویژه همکاری (در صورت وجود، اولویت داره)
+  "_tak_partner_price", // قیمت همکاری
+  // کلیدهای احتمالی قدیمی (برای اطمینان، اگه جایی استفاده شده باشن)
+  "_hamkar_price",
+  "_wholesale_price",
+  "_price_role_hamkar",
+  "wholesale_customer_wholesale_price",
+  "wholesale_price",
+  "_employee_price",
+];
+
 function getProductPrice(product, role = "customer") {
-  // قیمت مشتری
-  let customerPrice = product.sale_price || product.regular_price || product.price;
+  let price = product.price;
 
-  // اگر همکار نیست، همان قیمت مشتری را برگردان
-  if (role !== "hamkar") {
-    return Number(customerPrice || 0);
+  if (role === "hamkar") {
+    const hamkarPrice = getMeta(product, HAMKAR_PRICE_KEYS);
+
+    if (hamkarPrice) {
+      price = hamkarPrice;
+    }
   }
 
-  // قیمت همکاری از متای سفارشی
-  const hamkarPrice = getMeta(product, HAMKAR_PRICE_KEYS);
-
-  // اگر قیمت همکاری وجود داشت، همان را نمایش بده
-  if (hamkarPrice) {
-    return Number(hamkarPrice);
-  }
-
-  // در غیر این صورت قیمت مشتری
-  return Number(customerPrice || 0);
+  return Number(price || 0);
 }
 
 // =====================================
@@ -648,11 +677,13 @@ module.exports = {
   getSaleProducts,
   getBestSellingProducts,
   getAllProducts,
+  getMeta,
+  HAMKAR_PRICE_KEYS,
   findUserByPhone,
   getUserRole,
   getProductPrice,
   formatPrice,
   normalizePhone,
-  getMeta,
-  HAMKAR_PRICE_KEYS,
+  getOrderByIdAndPhone,
+  getOrderStatusLabel,
 };

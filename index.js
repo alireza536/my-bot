@@ -16,6 +16,8 @@ const {
   getAllProducts,
   getMeta,
   HAMKAR_PRICE_KEYS,
+  getOrderByIdAndPhone,
+  getOrderStatusLabel,
 } = require("./woocommerce");
 
 const { saveUsers, loadUsers, recordSeenUser, getSeenUsersCount, getAllSeenUserIds, getSeenUsersDetailed } = require("./store");
@@ -34,6 +36,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 const users = new Map();
 const searchMode = new Map();
+const orderTrackState = new Map(); // telegramId -> { step: "order_id" | "phone", orderId }
 
 // =====================================
 // ثبت هر کاربری که با ربات تعامل داره
@@ -58,6 +61,7 @@ bot.use((ctx, next) => {
 
 function showMainMenu(ctx) {
   searchMode.delete(ctx.from.id);
+  orderTrackState.delete(ctx.from.id);
 
   return ctx.reply(
     "🛍 *به فروشگاه TAKORG خوش آمدید*\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
@@ -489,6 +493,60 @@ bot.on("text", async (ctx, next) => {
     return next();
   }
 
+  // حالت پیگیری سفارش (مرحلهٔ کد سفارش / شماره موبایل)
+  if (orderTrackState.has(ctx.from.id)) {
+    const state = orderTrackState.get(ctx.from.id);
+
+    if (state.step === "order_id") {
+      const orderId = text.replace(/\D/g, "");
+
+      if (!orderId) {
+        return ctx.reply("⚠️ لطفاً فقط عدد شمارهٔ سفارش رو وارد کنید.");
+      }
+
+      orderTrackState.set(ctx.from.id, { step: "phone", orderId });
+
+      return ctx.reply(
+        "📱 حالا شماره موبایلی که سفارش رو با آن ثبت کرده‌اید وارد کنید:"
+      );
+    }
+
+    if (state.step === "phone") {
+      const phone = normalizePhone(text);
+
+      orderTrackState.delete(ctx.from.id);
+
+      try {
+        const order = await getOrderByIdAndPhone(state.orderId, phone);
+
+        if (!order) {
+          await ctx.reply(
+            "❌ سفارشی با این شماره سفارش و شماره موبایل پیدا نشد.\n\nلطفاً از صحت کد سفارش و شماره موبایل مطمئن شوید."
+          );
+          return showMainMenu(ctx);
+        }
+
+        const statusLabel = getOrderStatusLabel(order.status);
+        const total = formatPrice(order.total);
+        const itemsCount = order.line_items?.length || 0;
+
+        await ctx.reply(
+          `📦 *سفارش #${order.number}*\n\n` +
+            `وضعیت: ${statusLabel}\n` +
+            `تعداد اقلام: ${itemsCount}\n` +
+            `مبلغ کل: ${total} تومان`,
+          { parse_mode: "Markdown" }
+        );
+
+        return showMainMenu(ctx);
+      } catch (err) {
+        console.error("Order Track Error:", err.message);
+        await ctx.reply("❌ خطا در بررسی سفارش. لطفاً دوباره تلاش کنید.");
+        return showMainMenu(ctx);
+      }
+    }
+  }
+
   // حالت جستجو
   if (searchMode.get(ctx.from.id)) {
     try {
@@ -565,15 +623,36 @@ bot.hears("🛒 سبد خرید", (ctx) => {
 
 bot.hears("📦 سفارش‌های من", (ctx) => {
   return ctx.reply(
-    "📦 برای مشاهده سفارش‌های خود، ابتدا وارد حساب کاربری شوید.",
+    "📦 چطور می‌خواید سفارشتون رو پیگیری کنید؟",
     Markup.inlineKeyboard([
       [
+        Markup.button.callback(
+          "🔎 پیگیری با کد سفارش",
+          "track_order_start"
+        ),
+      ],
+      [
         Markup.button.url(
-          "📦 ورود و مشاهده سفارش‌ها",
+          "🔐 ورود و مشاهده سفارش‌ها",
           "https://takorg.com/my-account/orders/"
         ),
       ],
     ])
+  );
+});
+
+// =====================================
+// پیگیری سفارش با کد سفارش + شماره موبایل
+// =====================================
+
+bot.action("track_order_start", async (ctx) => {
+  await ctx.answerCbQuery();
+
+  orderTrackState.set(ctx.from.id, { step: "order_id" });
+
+  return ctx.reply(
+    "🔎 لطفاً شمارهٔ سفارش (کد فاکتور) را وارد کنید:\n\nمثلاً: 1024",
+    Markup.keyboard([["🔙 بازگشت به منوی اصلی"]]).resize()
   );
 });
 
