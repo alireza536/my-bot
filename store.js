@@ -190,6 +190,78 @@ async function getSeenUsersDetailed() {
   }
 }
 
+// =====================================
+// اشتراک «خبرم کن» برای محصولات ناموجود
+// یه Hash توی Redis: کلید = شناسهٔ محصول،
+// مقدار = آرایه‌ای از آیدی‌های تلگرام منتظر
+// =====================================
+
+const STOCK_WATCH_KEY = "takorg:bot:stock_watch";
+
+// اضافه کردن یه کاربر به لیست منتظرهای یه محصول
+async function addStockWatcher(productId, telegramId) {
+  if (!isEnabled) return false;
+
+  try {
+    const raw = await client.hget(STOCK_WATCH_KEY, String(productId));
+    const watchers = raw ? JSON.parse(raw) : [];
+
+    if (watchers.includes(telegramId)) {
+      return false; // قبلاً ثبت شده بود
+    }
+
+    watchers.push(telegramId);
+
+    await client.hset(
+      STOCK_WATCH_KEY,
+      String(productId),
+      JSON.stringify(watchers)
+    );
+
+    return true;
+  } catch (err) {
+    console.error("⚠️ [Store] خطا در ثبت اشتراک موجودی:", err.message);
+    return false;
+  }
+}
+
+// همهٔ محصولاتی که یه نفر منتظرشونه، به همراه لیست منتظرها
+// (برای چک دوره‌ای موجودی در پس‌زمینه)
+async function getAllStockWatches() {
+  if (!isEnabled) return {};
+
+  try {
+    const all = await client.hgetall(STOCK_WATCH_KEY);
+    const result = {};
+
+    for (const productId of Object.keys(all)) {
+      result[productId] = JSON.parse(all[productId]);
+    }
+
+    return result;
+  } catch (err) {
+    console.error(
+      "⚠️ [Store] خطا در دریافت لیست اشتراک‌های موجودی:",
+      err.message
+    );
+    return {};
+  }
+}
+
+// بعد از اطلاع‌رسانی، اشتراک یه محصول کامل پاک می‌شه
+async function clearStockWatch(productId) {
+  if (!isEnabled) return;
+
+  try {
+    await client.hdel(STOCK_WATCH_KEY, String(productId));
+  } catch (err) {
+    console.error(
+      "⚠️ [Store] خطا در پاک‌کردن اشتراک موجودی:",
+      err.message
+    );
+  }
+}
+
 module.exports = {
   saveUsers,
   loadUsers,
@@ -197,5 +269,8 @@ module.exports = {
   getSeenUsersCount,
   getAllSeenUserIds,
   getSeenUsersDetailed,
+  addStockWatcher,
+  getAllStockWatches,
+  clearStockWatch,
   isEnabled,
 };

@@ -19,9 +19,20 @@ const {
   getOrderByIdAndPhone,
   getOrderStatusLabel,
   getSaleProducts,
+  getProductById,
 } = require("./woocommerce");
 
-const { saveUsers, loadUsers, recordSeenUser, getSeenUsersCount, getAllSeenUserIds, getSeenUsersDetailed } = require("./store");
+const {
+  saveUsers,
+  loadUsers,
+  recordSeenUser,
+  getSeenUsersCount,
+  getAllSeenUserIds,
+  getSeenUsersDetailed,
+  addStockWatcher,
+  getAllStockWatches,
+  clearStockWatch,
+} = require("./store");
 
 // آیدی عددی تلگرام مدیر (برای دسترسی به دستورات مخفی مثل /priceaudit)
 // این عدد رو از لاگ‌های قبلی ربات (بخش [Telegram] ... telegramId) پیدا کردم.
@@ -38,6 +49,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const users = new Map();
 const searchMode = new Map();
 const orderTrackState = new Map(); // telegramId -> { step: "order_id" }
+const stockCheckMode = new Map(); // telegramId -> true (منتظر انتخاب دسته‌بندی برای وضعیت موجودی)
 
 // =====================================
 // ثبت هر کاربری که با ربات تعامل داره
@@ -63,6 +75,7 @@ bot.use((ctx, next) => {
 function showMainMenu(ctx) {
   searchMode.delete(ctx.from.id);
   orderTrackState.delete(ctx.from.id);
+  stockCheckMode.delete(ctx.from.id);
 
   return ctx.reply(
     "🛍 *به فروشگاه TAKORG خوش آمدید*\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
@@ -70,7 +83,8 @@ function showMainMenu(ctx) {
       parse_mode: "Markdown",
       ...Markup.keyboard([
         ["🛍 مشاهده محصولات", "🔍 جستجوی محصول"],
-        ["🔥 پیشنهاد ویژه", "📄 دریافت لیست کامل قیمت"],
+        ["🔥 پیشنهاد ویژه", "📋 وضعیت موجودی"],
+        ["📄 دریافت لیست کامل قیمت"],
         ["🛒 سبد خرید", "📦 سفارش‌های من"],
         ["📞 پشتیبانی", "🔐 احراز هویت"],
         ["📱 ثبت شماره من"],
@@ -232,6 +246,30 @@ bot.hears("🔥 پیشنهاد ویژه", async (ctx) => {
   } catch (err) {
     console.error("Special Offer Error:", err.message);
     return ctx.reply("❌ خطا در دریافت پیشنهادهای ویژه.");
+  }
+});
+
+// =====================================
+// وضعیت موجودی (موجود + ناموجود با دکمه خبرم‌کن)
+// =====================================
+
+bot.hears("📋 وضعیت موجودی", async (ctx) => {
+  try {
+    const categories = await getCategories();
+
+    const buttons = categories.map((cat) => [cat.name]);
+
+    buttons.push(["🔙 بازگشت به منوی اصلی"]);
+
+    stockCheckMode.set(ctx.from.id, true);
+
+    return ctx.reply(
+      "📋 برای دیدن وضعیت موجودی، یک دسته‌بندی را انتخاب کنید:",
+      Markup.keyboard(buttons).resize()
+    );
+  } catch (err) {
+    console.error(err.message);
+    return ctx.reply("❌ خطا در دریافت دسته‌بندی‌ها.");
   }
 });
 
@@ -491,8 +529,115 @@ async function sendProduct(ctx, product) {
 }
 
 // =====================================
-// انتخاب دسته‌بندی و جستجو
+// نمایش محصول در حالت «وضعیت موجودی»
+// (موجود/ناموجود + دکمهٔ خبرم‌کن برای ناموجودها)
 // =====================================
+
+async function sendStockProduct(ctx, product) {
+  const role = "hamkar";
+  const price = getProductPrice(product, role);
+  const priceText = formatPrice(price);
+
+  const inStock = product.stock_status === "instock";
+  const statusLabel = inStock ? "✅ موجود" : "❌ ناموجود";
+
+  const caption =
+    `🛍 *${product.name}*\n\n` +
+    `${statusLabel}\n` +
+    `💰 قیمت: *${priceText} تومان*`;
+
+  const buttonsRow = [
+    Markup.button.url("🛒 خرید از سایت", product.permalink),
+  ];
+
+  if (!inStock) {
+    buttonsRow.push(
+      Markup.button.callback("🔔 خبرم کن", `notify:${product.id}`)
+    );
+  }
+
+  const image = product.images?.length ? product.images[0].src : null;
+
+  if (image) {
+    return ctx.replyWithPhoto(image, {
+      caption,
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([buttonsRow]),
+    });
+  }
+
+  return ctx.reply(caption, {
+    parse_mode: "Markdown",
+    ...Markup.inlineKeyboard([buttonsRow]),
+  });
+}
+
+// =====================================
+// دکمهٔ «خبرم کن» — ثبت اشتراک اطلاع‌رسانی موجودی
+// =====================================
+
+bot.action(/^notify:(\d+)$/, async (ctx) => {
+  const productId = ctx.match[1];
+
+  try {
+    const added = await addStockWatcher(Number(productId), ctx.from.id);
+
+    if (added) {
+      await ctx.answerCbQuery("ثبت شد ✅");
+      await ctx.reply(
+        "🔔 باشه! به‌محض اینکه این محصول موجود شد بهتون خبر می‌دیم."
+      );
+    } else {
+      await ctx.answerCbQuery("قبلاً ثبت شده بود");
+    }
+  } catch (err) {
+    console.error("Notify Subscribe Error:", err.message);
+    await ctx.answerCbQuery("❌ خطا، دوباره امتحان کنید");
+  }
+});
+
+// =====================================
+// چک دوره‌ای موجودی محصولات موردنظر
+// و اطلاع‌رسانی به کسایی که «خبرم کن» زدن
+// =====================================
+
+const STOCK_CHECK_INTERVAL_MS = 15 * 60 * 1000; // هر ۱۵ دقیقه
+
+async function checkStockWatches() {
+  const watches = await getAllStockWatches();
+
+  const productIds = Object.keys(watches);
+
+  if (!productIds.length) return;
+
+  for (const productId of productIds) {
+    const product = await getProductById(productId);
+
+    if (!product) continue;
+
+    if (product.stock_status === "instock") {
+      const watchers = watches[productId];
+
+      for (const telegramId of watchers) {
+        try {
+          await bot.telegram.sendMessage(
+            telegramId,
+            `🎉 خبر خوب! محصول «${product.name}» موجود شد.`,
+            Markup.inlineKeyboard([
+              [Markup.button.url("🛒 خرید از سایت", product.permalink)],
+            ])
+          );
+        } catch (err) {
+          // مثلاً کاربر ربات رو بلاک کرده؛ نادیده می‌گیریم
+        }
+      }
+
+      await clearStockWatch(productId);
+    }
+  }
+}
+
+setInterval(checkStockWatches, STOCK_CHECK_INTERVAL_MS);
 
 bot.on("text", async (ctx, next) => {
   const text = ctx.message.text;
@@ -501,6 +646,7 @@ bot.on("text", async (ctx, next) => {
     "🛍 مشاهده محصولات",
     "🔍 جستجوی محصول",
     "🔥 پیشنهاد ویژه",
+    "📋 وضعیت موجودی",
     "📄 دریافت لیست کامل قیمت",
     "🛒 سبد خرید",
     "📦 سفارش‌های من",
@@ -591,6 +737,32 @@ bot.on("text", async (ctx, next) => {
       console.error(err.message);
 
       return ctx.reply("❌ خطا در جستجو.");
+    }
+  }
+
+  // حالت وضعیت موجودی (موجود + ناموجود با دکمه خبرم‌کن)
+  if (stockCheckMode.get(ctx.from.id)) {
+    stockCheckMode.delete(ctx.from.id);
+
+    try {
+      const products = await getProductsByCategory(text, {
+        includeOutOfStock: true,
+      });
+
+      if (!products.length) {
+        await ctx.reply("❌ محصولی توی این دسته‌بندی پیدا نشد.");
+        return showMainMenu(ctx);
+      }
+
+      for (const product of products) {
+        await sendStockProduct(ctx, product);
+      }
+
+      return showMainMenu(ctx);
+    } catch (err) {
+      console.error("Stock Status Error:", err.message);
+      await ctx.reply("❌ خطا در دریافت وضعیت موجودی.");
+      return showMainMenu(ctx);
     }
   }
 

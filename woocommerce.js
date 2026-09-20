@@ -120,7 +120,7 @@ async function getCategories() {
 // دریافت محصولات یک دسته
 // =====================================
 
-async function getProductsByCategory(categoryName) {
+async function getProductsByCategory(categoryName, { includeOutOfStock = false } = {}) {
   try {
     const categories = await getCategories();
 
@@ -130,20 +130,23 @@ async function getProductsByCategory(categoryName) {
 
     if (!category) return [];
 
-    const { data } = await api.get("/products", {
-      params: {
-        category: category.id,
-        per_page: 20,
-        status: "publish",
-        stock_status: "instock",
-      },
-    });
+    const params = {
+      category: category.id,
+      per_page: 20,
+      status: "publish",
+    };
 
-    return data.filter(
-      (product) =>
-        product.stock_status === "instock" &&
-        product.catalog_visibility !== "hidden"
-    );
+    if (!includeOutOfStock) {
+      params.stock_status = "instock";
+    }
+
+    const { data } = await api.get("/products", { params });
+
+    return data.filter((product) => {
+      if (product.catalog_visibility === "hidden") return false;
+      if (!includeOutOfStock && product.stock_status !== "instock") return false;
+      return true;
+    });
   } catch (err) {
     console.error(
       "Products Error:",
@@ -151,6 +154,26 @@ async function getProductsByCategory(categoryName) {
     );
 
     return [];
+  }
+}
+
+// =====================================
+// دریافت یک محصول با شناسه (برای چک کردن
+// موجودی در فرآیند پس‌زمینهٔ «خبرم کن»)
+// =====================================
+
+async function getProductById(productId) {
+  try {
+    const { data } = await api.get(`/products/${productId}`);
+    return data;
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+
+    console.error(
+      "Get Product Error:",
+      err.response?.data || err.message
+    );
+    return null;
   }
 }
 
@@ -686,4 +709,5 @@ module.exports = {
   normalizePhone,
   getOrderByIdAndPhone,
   getOrderStatusLabel,
+  getProductById,
 };
