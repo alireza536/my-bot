@@ -15,9 +15,8 @@ const Redis = require("ioredis");
 
 const REDIS_URL = process.env.REDIS_URL || null;
 
-console.log("STORE_DEBUG REDIS_URL is set:", Boolean(REDIS_URL));
-
 const USERS_KEY = "takorg:bot:users";
+const SEEN_USERS_KEY = "takorg:bot:seen_users";
 
 let client = null;
 
@@ -82,7 +81,10 @@ async function loadUsers() {
   try {
     const raw = await client.get(USERS_KEY);
 
-    if (!raw) return map;
+    if (!raw) {
+      console.log("👥 [Store] هنوز هیچ کاربر ذخیره‌شده‌ای روی Redis نبود.");
+      return map;
+    }
 
     const plain = JSON.parse(raw);
 
@@ -101,4 +103,73 @@ async function loadUsers() {
   return map;
 }
 
-module.exports = { saveUsers, loadUsers, isEnabled };
+// =====================================
+// ثبت «همهٔ» کاربرهایی که تا حالا با ربات
+// تعامل داشتن (نه فقط اونایی که شماره دادن)
+// برای آمار و پیام همگانی
+// =====================================
+
+// یه بار در طول عمر پروسه، برای هر کاربر فقط یه‌بار
+// درخواست نوشتن به Redis می‌فرستیم (نه هر پیام)
+const recordedThisRun = new Set();
+
+async function recordSeenUser(telegramId, info = {}) {
+  if (!isEnabled) return;
+  if (recordedThisRun.has(telegramId)) return;
+
+  recordedThisRun.add(telegramId);
+
+  try {
+    await client.hset(
+      SEEN_USERS_KEY,
+      String(telegramId),
+      JSON.stringify({
+        telegramId,
+        firstName: info.firstName || null,
+        lastName: info.lastName || null,
+        username: info.username || null,
+        lastSeenAt: new Date().toISOString(),
+      })
+    );
+  } catch (err) {
+    console.error(
+      "⚠️ [Store] خطا در ثبت کاربر دیده‌شده:",
+      err.message
+    );
+  }
+}
+
+// تعداد کل کاربرهای منحصربه‌فردی که تا حالا ربات رو
+// استفاده کردن (برای دستور /stats)
+async function getSeenUsersCount() {
+  if (!isEnabled) return 0;
+
+  try {
+    return await client.hlen(SEEN_USERS_KEY);
+  } catch (err) {
+    console.error("⚠️ [Store] خطا در شمارش کاربرها:", err.message);
+    return 0;
+  }
+}
+
+// لیست آیدی تلگرام همهٔ کاربرهای دیده‌شده (برای /broadcast)
+async function getAllSeenUserIds() {
+  if (!isEnabled) return [];
+
+  try {
+    const ids = await client.hkeys(SEEN_USERS_KEY);
+    return ids.map(Number);
+  } catch (err) {
+    console.error("⚠️ [Store] خطا در دریافت لیست کاربرها:", err.message);
+    return [];
+  }
+}
+
+module.exports = {
+  saveUsers,
+  loadUsers,
+  recordSeenUser,
+  getSeenUsersCount,
+  getAllSeenUserIds,
+  isEnabled,
+};

@@ -18,7 +18,7 @@ const {
   HAMKAR_PRICE_KEYS,
 } = require("./woocommerce");
 
-const { saveUsers, loadUsers } = require("./store");
+const { saveUsers, loadUsers, recordSeenUser, getSeenUsersCount, getAllSeenUserIds } = require("./store");
 
 // آیدی عددی تلگرام مدیر (برای دسترسی به دستورات مخفی مثل /priceaudit)
 // این عدد رو از لاگ‌های قبلی ربات (بخش [Telegram] ... telegramId) پیدا کردم.
@@ -34,6 +34,23 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 const users = new Map();
 const searchMode = new Map();
+
+// =====================================
+// ثبت هر کاربری که با ربات تعامل داره
+// (برای دستور /stats و /broadcast — مستقل
+// از اینکه شماره موبایلش رو داده یا نه)
+// =====================================
+
+bot.use((ctx, next) => {
+  if (ctx.from) {
+    recordSeenUser(ctx.from.id, {
+      firstName: ctx.from.first_name,
+      lastName: ctx.from.last_name,
+      username: ctx.from.username,
+    });
+  }
+  return next();
+});
 
 // =====================================
 // منوی اصلی
@@ -108,7 +125,14 @@ bot.start(async (ctx) => {
     { parse_mode: "Markdown" }
   );
 
-  return showMainMenu(ctx);
+  // اگه این کاربر قبلاً شماره‌اش رو داده (چه همین اجرا، چه
+  // از دفعهٔ قبل که از Redis بارگذاری شده)، دیگه دوباره
+  // شماره نخواه و مستقیم منو رو نشون بده.
+  if (users.has(telegramId)) {
+    return showMainMenu(ctx);
+  }
+
+  return requestPhone(ctx);
 });
 
 // =====================================
@@ -128,58 +152,34 @@ bot.on("contact", async (ctx) => {
       );
     }
 
-    // شماره خام دریافتی از تلگرام را با همان تابع نرمال‌ساز
-    // مشترکِ woocommerce.js به فرمت یکسان "9123456789" تبدیل می‌کنیم
-    // تا با شماره‌های ذخیره‌شده در سایت همیشه یکسان مقایسه شود.
     const rawPhone = contact.phone_number;
     const phone = normalizePhone(rawPhone);
 
     console.log(
-      `📞 [Telegram] شماره خام دریافتی: ${rawPhone} | نرمال‌شده: ${phone}`
+      `📞 [Telegram] شماره ثبت شد: ${rawPhone} | نرمال‌شده: ${phone} | telegramId: ${telegramId}`
     );
 
-    await ctx.reply("🔍 در حال بررسی شماره شما در سایت...");
-
-    const user = await findUserByPhone(phone);
-
-    const role = getUserRole(user) || "customer";
-
+    // دیگه به ووکامرس سر نمی‌زنیم؛ فقط شماره رو ذخیره می‌کنیم.
     users.set(telegramId, {
       telegramId,
       phone,
-      role,
-      customerId: user?.id || null,
-      firstName: user?.firstName || null,
-      lastName: user?.lastName || null,
-      user,
+      role: "hamkar",
+      firstName: ctx.from.first_name || null,
+      lastName: ctx.from.last_name || null,
     });
 
     // ذخیرهٔ ماندگار (بی‌صدا در پس‌زمینه؛ اگه شکست بخوره
     // ربات همچنان با حافظهٔ موقت کار می‌کنه)
     saveUsers(users);
 
-    if (user) {
-      if (role === "hamkar") {
-        await ctx.reply(
-          "✅ شماره شما تأیید شد.\n\n👨‍💼 نقش شما: مشتری همکار\n\nقیمت‌های مشتری همکار برای شما نمایش داده می‌شود."
-        );
-      } else {
-        await ctx.reply(
-          "✅ شماره شما تأیید شد.\n\n👤 نقش شما: مشتری تکی\n\nقیمت‌های مشتری تکی برای شما نمایش داده می‌شود."
-        );
-      }
-    } else {
-      await ctx.reply(
-        "❌ شماره شما در سایت TAKORG ثبت نشده است.\n\nاگر قبلاً ثبت‌نام کرده‌اید، مطمئن شوید شماره ثبت‌شده در سایت با شماره تلگرام یکسان است."
-      );
-    }
+    await ctx.reply("✅ شماره شما با موفقیت ثبت شد.");
 
     return showMainMenu(ctx);
   } catch (err) {
     console.error("Contact Error:", err.message);
 
     return ctx.reply(
-      "❌ خطا در بررسی شماره. لطفاً دوباره تلاش کنید."
+      "❌ خطا در ثبت شماره. لطفاً دوباره تلاش کنید."
     );
   }
 });
@@ -239,6 +239,81 @@ bot.hears("📄 دریافت لیست کامل قیمت", async (ctx) => {
     return ctx.reply(
       "❌ خطا در ارسال فایل PDF. لطفاً دوباره تلاش کنید."
     );
+  }
+});
+
+// =====================================
+// آمار کاربرها (فقط برای مدیر)
+// =====================================
+
+bot.command("stats", async (ctx) => {
+  if (ctx.from.id !== ADMIN_TELEGRAM_ID) {
+    return; // بی‌صدا نادیده بگیر، این دستور مخفیه
+  }
+
+  try {
+    const totalSeen = await getSeenUsersCount();
+    const totalRegistered = users.size;
+
+    await ctx.reply(
+      `📊 آمار ربات:\n\n` +
+        `👥 کل کاربرهایی که با ربات تعامل داشتن: ${totalSeen}\n` +
+        `📱 کسایی که شماره‌شون رو ثبت کردن: ${totalRegistered}`
+    );
+  } catch (err) {
+    console.error("Stats Error:", err.message);
+    return ctx.reply("❌ خطا در دریافت آمار: " + err.message);
+  }
+});
+
+// =====================================
+// پیام همگانی (فقط برای مدیر)
+// استفاده: /broadcast متن پیام شما
+// =====================================
+
+bot.command("broadcast", async (ctx) => {
+  if (ctx.from.id !== ADMIN_TELEGRAM_ID) {
+    return; // بی‌صدا نادیده بگیر، این دستور مخفیه
+  }
+
+  const text = ctx.message.text.replace(/^\/broadcast(@\S+)?\s*/, "");
+
+  if (!text) {
+    return ctx.reply(
+      "⚠️ متن پیام رو بعد از دستور بنویس.\n\nمثال:\n/broadcast محصولات جدید به فروشگاه اضافه شد!"
+    );
+  }
+
+  try {
+    const userIds = await getAllSeenUserIds();
+
+    if (!userIds.length) {
+      return ctx.reply("❌ هیچ کاربری برای ارسال پیدا نشد.");
+    }
+
+    await ctx.reply(`⏳ در حال ارسال پیام به ${userIds.length} نفر...`);
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const userId of userIds) {
+      try {
+        await ctx.telegram.sendMessage(userId, text);
+        sent++;
+      } catch (err) {
+        failed++;
+      }
+
+      // یه مکث کوچیک بین هر ارسال تا به محدودیت تلگرام نخوریم
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    await ctx.reply(
+      `✅ پیام همگانی تموم شد.\n\nموفق: ${sent}\nناموفق (مثلاً بلاک کرده بودن): ${failed}`
+    );
+  } catch (err) {
+    console.error("Broadcast Error:", err.message);
+    return ctx.reply("❌ خطا در ارسال پیام همگانی: " + err.message);
   }
 });
 
