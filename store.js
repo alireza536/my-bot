@@ -15,6 +15,8 @@ const Redis = require("ioredis");
 
 const REDIS_URL = process.env.REDIS_URL || null;
 
+console.log("STORE_DEBUG REDIS_URL is set:", Boolean(REDIS_URL));
+
 const USERS_KEY = "takorg:bot:users";
 
 let client = null;
