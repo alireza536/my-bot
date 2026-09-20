@@ -865,8 +865,7 @@ bot.on("text", async (ctx, next) => {
         `✅ درخواست شما ثبت شد:\n\n` +
           `🛍 محصول: ${decodeHtmlEntities(requestState.productName)}\n` +
           `🔢 تعداد: ${quantity}\n` +
-          `📞 شماره تماس: ${displayPhone(userData.phone)}\n\n` +
-          `همکاران ما در اسرع وقت برای هماهنگی باهاتون تماس می‌گیرن 🙏`
+          `📞 شماره تماس: ${displayPhone(userData.phone)}`
       );
 
       return showMainMenu(ctx);
