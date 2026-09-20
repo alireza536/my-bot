@@ -34,6 +34,10 @@ const {
   getAllStockWatches,
   removeStockWatchers,
   pingStore,
+  addFavorite,
+  removeFavorite,
+  getFavorites,
+  MAX_FAVORITES,
 } = require("./store");
 
 // آیدی عددی تلگرام مدیر (برای دسترسی به دستورات مخفی مثل /priceaudit)
@@ -67,6 +71,7 @@ const MENU_BUTTONS = [
   "🔍 جستجوی محصول",
   "🔥 پیشنهاد ویژه",
   "🙋 برام موجودش کن",
+  "❤️ علاقه‌مندی‌های من",
   "📄 دریافت لیست کامل قیمت",
   "🛒 سبد خرید",
   "📦 سفارش‌های من",
@@ -126,7 +131,7 @@ function showMainMenu(ctx) {
       ...Markup.keyboard([
         ["🛍 مشاهده محصولات", "🔍 جستجوی محصول"],
         ["🔥 پیشنهاد ویژه", "🙋 برام موجودش کن"],
-        ["📄 دریافت لیست کامل قیمت"],
+        ["❤️ علاقه‌مندی‌های من", "📄 دریافت لیست کامل قیمت"],
         ["🛒 سبد خرید", "📦 سفارش‌های من"],
         ["📞 پشتیبانی", "🔐 احراز هویت"],
         ["📱 ثبت شماره من"],
@@ -295,8 +300,10 @@ bot.hears("🔥 پیشنهاد ویژه", async (ctx) => {
 
     await ctx.reply(`🔥 ${products.length} پیشنهاد ویژهٔ امروز:`);
 
+    const favSet = await getFavoriteIdSet(ctx.from.id);
+
     for (const product of products) {
-      await sendProduct(ctx, product);
+      await sendProduct(ctx, product, favSet);
     }
   } catch (err) {
     console.error("Special Offer Error:", err.message);
@@ -531,7 +538,7 @@ bot.command("priceaudit", async (ctx) => {
 // نمایش محصول با قیمت نقش
 // =====================================
 
-async function sendProduct(ctx, product) {
+async function sendProduct(ctx, product, favSet = null) {
   const telegramId = ctx.from.id;
 
   const userData = users.get(telegramId);
@@ -566,25 +573,258 @@ async function sendProduct(ctx, product) {
     ? product.images[0].src
     : null;
 
+  const isFavorite = Boolean(favSet && favSet.has(Number(product.id)));
+  const favSpec = favoriteButtonSpec(product.id, isFavorite);
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.url("🛒 خرید از سایت", product.permalink)],
+    [Markup.button.callback(favSpec.text, favSpec.data)],
+  ]);
+
   if (image) {
     return ctx.replyWithPhoto(image, {
       caption,
       parse_mode: "Markdown",
-      ...Markup.inlineKeyboard([
-        [
-          Markup.button.url(
-            "🛒 خرید از سایت",
-            product.permalink
-          ),
-        ],
-      ]),
+      ...keyboard,
     });
   }
 
   return ctx.reply(caption, {
     parse_mode: "Markdown",
+    ...keyboard,
   });
 }
+
+// =====================================
+// علاقه‌مندی‌ها
+// =====================================
+
+// متن و callback دکمهٔ علاقه‌مندی، بسته به اینکه محصول الان تو لیست هست یا نه
+//   fav:add:<id> → افزودن      fav:rm:<id> → حذف (روی کارت محصول)
+//   fav:del:<id> → حذف و پاک‌کردن کارت (توی خود لیست علاقه‌مندی‌ها)
+function favoriteButtonSpec(productId, isFavorite) {
+  return isFavorite
+    ? { text: "💔 حذف از علاقه‌مندی", data: `fav:rm:${productId}` }
+    : { text: "❤️ افزودن به علاقه‌مندی", data: `fav:add:${productId}` };
+}
+
+// مجموعهٔ شناسه‌های علاقه‌مندی کاربر (برای اینکه دکمهٔ هر محصول وضعیت درست رو نشون بده)
+async function getFavoriteIdSet(telegramId) {
+  const { ids } = await getFavorites(telegramId);
+  return new Set(ids);
+}
+
+// دکمهٔ علاقه‌مندیِ همون پیام رو (بدون دست‌زدن به بقیهٔ دکمه‌ها) عوض می‌کنه
+async function swapFavoriteButton(ctx, productId, isFavorite) {
+  const keyboard = ctx.callbackQuery?.message?.reply_markup?.inline_keyboard;
+
+  if (!keyboard) return;
+
+  const spec = favoriteButtonSpec(productId, isFavorite);
+
+  const newKeyboard = keyboard.map((row) =>
+    row.map((btn) =>
+      btn.callback_data &&
+      /^fav:(add|rm):\d+$/.test(btn.callback_data) &&
+      btn.callback_data.endsWith(`:${productId}`)
+        ? { text: spec.text, callback_data: spec.data }
+        : btn
+    )
+  );
+
+  try {
+    await ctx.editMessageReplyMarkup({ inline_keyboard: newKeyboard });
+  } catch (err) {
+    // مثلاً «message is not modified»؛ مهم نیست
+  }
+}
+
+bot.action(/^fav:(add|rm|del):(\d+)$/, async (ctx) => {
+  const action = ctx.match[1];
+  const productId = Number(ctx.match[2]);
+  const telegramId = ctx.from.id;
+
+  try {
+    if (action === "add") {
+      const result = await addFavorite(telegramId, productId);
+
+      if (result === "added" || result === "exists") {
+        await ctx.answerCbQuery(
+          result === "added"
+            ? "به علاقه‌مندی‌ها اضافه شد ❤️"
+            : "قبلاً توی علاقه‌مندی‌هاتون بود ❤️"
+        );
+
+        return swapFavoriteButton(ctx, productId, true);
+      }
+
+      if (result === "full") {
+        return ctx.answerCbQuery(
+          `❌ حداکثر ${MAX_FAVORITES} محصول می‌تونید توی علاقه‌مندی‌ها داشته باشید. اول یکی از قبلی‌ها رو حذف کنید.`,
+          { show_alert: true }
+        );
+      }
+
+      console.error(
+        `❌ [Favorites] افزودن انجام نشد (${result}) → محصول ${productId} | کاربر ${telegramId}`
+      );
+
+      return ctx.answerCbQuery(
+        "❌ فعلاً امکان ذخیره نیست. لطفاً کمی بعد دوباره امتحان کنید.",
+        { show_alert: true }
+      );
+    }
+
+    // action === "rm" | "del"
+    const result = await removeFavorite(telegramId, productId);
+
+    if (result !== "removed" && result !== "missing") {
+      console.error(
+        `❌ [Favorites] حذف انجام نشد (${result}) → محصول ${productId} | کاربر ${telegramId}`
+      );
+
+      return ctx.answerCbQuery(
+        "❌ فعلاً امکان حذف نیست. لطفاً کمی بعد دوباره امتحان کنید.",
+        { show_alert: true }
+      );
+    }
+
+    await ctx.answerCbQuery("از علاقه‌مندی‌ها حذف شد 💔");
+
+    if (action === "rm") {
+      return swapFavoriteButton(ctx, productId, false);
+    }
+
+    // داخل لیست علاقه‌مندی‌ها: کارت رو پاک کن
+    try {
+      await ctx.deleteMessage();
+    } catch (err) {
+      // پیام‌های خیلی قدیمی قابل‌حذف نیستن؛ دکمه‌ها رو برمی‌داریم
+      try {
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
+      } catch (e) {
+        // مهم نیست
+      }
+    }
+  } catch (err) {
+    console.error("Favorites Action Error:", err.message);
+
+    try {
+      await ctx.answerCbQuery("❌ خطا، دوباره امتحان کنید");
+    } catch (e) {
+      // مهم نیست
+    }
+  }
+});
+
+// کارت یک محصول توی لیست «علاقه‌مندی‌های من»
+async function sendFavoriteCard(ctx, product) {
+  const price = formatPrice(getProductPrice(product, "hamkar"));
+  const inStock = product.stock_status === "instock";
+
+  const caption =
+    `🛍 <b>${safeText(product.name)}</b>\n\n` +
+    `${inStock ? "✅ موجود" : "❌ ناموجود"}\n` +
+    `💰 قیمت: <b>${price} تومان</b>`;
+
+  const rows = [];
+
+  if (inStock && product.permalink) {
+    rows.push([Markup.button.url("🛒 خرید از سایت", product.permalink)]);
+  }
+
+  rows.push([
+    Markup.button.callback("💔 حذف از علاقه‌مندی", `fav:del:${product.id}`),
+  ]);
+
+  if (!inStock) {
+    rows.push([
+      Markup.button.callback("🙋 برام موجودش کن", `req:${product.id}`),
+    ]);
+  }
+
+  const extra = { parse_mode: "HTML", ...Markup.inlineKeyboard(rows) };
+
+  const image = product.images?.length ? product.images[0].src : null;
+
+  if (image) {
+    try {
+      return await ctx.replyWithPhoto(image, { caption, ...extra });
+    } catch (err) {
+      console.error(
+        `⚠️ [Favorites] ارسال عکس محصول ${product.id} ناموفق بود؛ بدون عکس ارسال می‌شه:`,
+        err.message
+      );
+    }
+  }
+
+  return ctx.reply(caption, extra);
+}
+
+// =====================================
+// دکمهٔ منو: ❤️ علاقه‌مندی‌های من
+// =====================================
+
+bot.hears("❤️ علاقه‌مندی‌های من", async (ctx) => {
+  const telegramId = ctx.from.id;
+
+  searchMode.delete(telegramId);
+  orderTrackState.delete(telegramId);
+  stockCheckMode.delete(telegramId);
+
+  try {
+    const { status, ids } = await getFavorites(telegramId);
+
+    if (status !== "ok") {
+      return ctx.reply(
+        "❌ فعلاً امکان نمایش علاقه‌مندی‌ها نیست. لطفاً کمی بعد دوباره تلاش کنید."
+      );
+    }
+
+    const emptyText =
+      "❤️ لیست علاقه‌مندی‌های شما خالیه.\n\nزیر هر محصول موجود روی «❤️ افزودن به علاقه‌مندی» بزنید تا اینجا ذخیره بشه.";
+
+    if (!ids.length) {
+      return ctx.reply(emptyText);
+    }
+
+    const fetched = await getProductsByIds(ids);
+    const byId = new Map(fetched.map((p) => [Number(p.id), p]));
+
+    const products = [];
+
+    for (const id of ids) {
+      const product = byId.get(id);
+
+      if (!product) {
+        // محصول از سایت حذف شده → از لیست کاربر هم پاک بشه
+        await removeFavorite(telegramId, id);
+        continue;
+      }
+
+      // محصول پیش‌نویس/خصوصی رو نشون نمی‌دیم (ولی از لیست حذفش نمی‌کنیم)
+      if (product.status && product.status !== "publish") continue;
+
+      products.push(product);
+    }
+
+    if (!products.length) {
+      return ctx.reply(emptyText);
+    }
+
+    await ctx.reply(
+      `❤️ ${products.length} محصول توی لیست علاقه‌مندی‌های شماست:`
+    );
+
+    for (const product of products) {
+      await sendFavoriteCard(ctx, product);
+      await sleep(80); // رعایت محدودیت ارسال تلگرام
+    }
+  } catch (err) {
+    console.error("Favorites List Error:", err.message);
+    return ctx.reply("❌ خطا در دریافت علاقه‌مندی‌ها. لطفاً دوباره تلاش کنید.");
+  }
+});
 
 // =====================================
 // ابزارهای کمکی «برام موجودش کن»
@@ -1208,8 +1448,10 @@ bot.on("text", async (ctx, next) => {
 
       searchMode.delete(ctx.from.id);
 
+      const favSet = await getFavoriteIdSet(ctx.from.id);
+
       for (const product of products) {
-        await sendProduct(ctx, product);
+        await sendProduct(ctx, product, favSet);
       }
 
       return;
@@ -1258,8 +1500,10 @@ bot.on("text", async (ctx, next) => {
 
     if (!products.length) return;
 
+    const favSet = await getFavoriteIdSet(ctx.from.id);
+
     for (const product of products) {
-      await sendProduct(ctx, product);
+      await sendProduct(ctx, product, favSet);
     }
   } catch (err) {
     console.error(err.message);

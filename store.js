@@ -336,6 +336,87 @@ async function clearStockWatch(productId) {
   }
 }
 
+// =====================================
+// علاقه‌مندی‌ها (لیست محصولات مورد علاقهٔ هر کاربر)
+// برای هر کاربر یه Sorted Set توی Redis:
+//   کلید  = takorg:bot:favorites:<telegramId>
+//   عضو   = شناسهٔ محصول
+//   امتیاز = زمان اضافه‌شدن (تا جدیدترین‌ها اول نشون داده بشن)
+// =====================================
+
+const FAVORITES_KEY_PREFIX = "takorg:bot:favorites:";
+
+// حداکثر تعداد محصول توی لیست علاقه‌مندی هر کاربر
+const MAX_FAVORITES = 30;
+
+function favoritesKey(telegramId) {
+  return `${FAVORITES_KEY_PREFIX}${telegramId}`;
+}
+
+// اضافه کردن یه محصول به علاقه‌مندی‌ها
+// خروجی: "added" | "exists" | "full" | "disabled" | "error"
+async function addFavorite(telegramId, productId) {
+  if (!isEnabled) return "disabled";
+
+  try {
+    const key = favoritesKey(telegramId);
+
+    // NX → اگه از قبل بوده، دست نزن
+    const added = await client.zadd(key, "NX", Date.now(), String(productId));
+
+    if (added === 0) return "exists";
+
+    // اگه از سقف رد شد، همین یکی رو پس می‌گیریم
+    const count = await client.zcard(key);
+
+    if (count > MAX_FAVORITES) {
+      await client.zrem(key, String(productId));
+      return "full";
+    }
+
+    return "added";
+  } catch (err) {
+    console.error("⚠️ [Store] خطا در افزودن به علاقه‌مندی:", err.message);
+    return "error";
+  }
+}
+
+// حذف یه محصول از علاقه‌مندی‌ها
+// خروجی: "removed" | "missing" | "disabled" | "error"
+async function removeFavorite(telegramId, productId) {
+  if (!isEnabled) return "disabled";
+
+  try {
+    const removed = await client.zrem(
+      favoritesKey(telegramId),
+      String(productId)
+    );
+
+    return removed ? "removed" : "missing";
+  } catch (err) {
+    console.error("⚠️ [Store] خطا در حذف از علاقه‌مندی:", err.message);
+    return "error";
+  }
+}
+
+// لیست شناسهٔ محصولات علاقه‌مندی یه کاربر (جدیدترین اول)
+// خروجی: { status: "ok" | "disabled" | "error", ids: number[] }
+async function getFavorites(telegramId) {
+  if (!isEnabled) return { status: "disabled", ids: [] };
+
+  try {
+    const raw = await client.zrevrange(favoritesKey(telegramId), 0, -1);
+
+    return {
+      status: "ok",
+      ids: raw.map(Number).filter((n) => Number.isFinite(n)),
+    };
+  } catch (err) {
+    console.error("⚠️ [Store] خطا در دریافت علاقه‌مندی‌ها:", err.message);
+    return { status: "error", ids: [] };
+  }
+}
+
 module.exports = {
   saveUsers,
   loadUsers,
@@ -348,5 +429,9 @@ module.exports = {
   removeStockWatchers,
   clearStockWatch,
   pingStore,
+  addFavorite,
+  removeFavorite,
+  getFavorites,
+  MAX_FAVORITES,
   isEnabled,
 };
