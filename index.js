@@ -18,6 +18,7 @@ const {
   HAMKAR_PRICE_KEYS,
   getOrderByIdAndPhone,
   getOrderStatusLabel,
+  getSaleProducts,
 } = require("./woocommerce");
 
 const { saveUsers, loadUsers, recordSeenUser, getSeenUsersCount, getAllSeenUserIds, getSeenUsersDetailed } = require("./store");
@@ -69,7 +70,7 @@ function showMainMenu(ctx) {
       parse_mode: "Markdown",
       ...Markup.keyboard([
         ["🛍 مشاهده محصولات", "🔍 جستجوی محصول"],
-        ["📄 دریافت لیست کامل قیمت"],
+        ["🔥 پیشنهاد ویژه", "📄 دریافت لیست کامل قیمت"],
         ["🛒 سبد خرید", "📦 سفارش‌های من"],
         ["📞 پشتیبانی", "🔐 احراز هویت"],
         ["📱 ثبت شماره من"],
@@ -208,6 +209,29 @@ bot.hears("🛍 مشاهده محصولات", async (ctx) => {
     console.error(err.message);
 
     return ctx.reply("❌ خطا در دریافت دسته‌بندی‌ها.");
+  }
+});
+
+// =====================================
+// پیشنهاد ویژه (محصولات تخفیف‌دار موجود)
+// =====================================
+
+bot.hears("🔥 پیشنهاد ویژه", async (ctx) => {
+  try {
+    const products = await getSaleProducts();
+
+    if (!products.length) {
+      return ctx.reply("😕 در حال حاضر پیشنهاد ویژه‌ای فعال نیست.");
+    }
+
+    await ctx.reply(`🔥 ${products.length} پیشنهاد ویژهٔ امروز:`);
+
+    for (const product of products) {
+      await sendProduct(ctx, product);
+    }
+  } catch (err) {
+    console.error("Special Offer Error:", err.message);
+    return ctx.reply("❌ خطا در دریافت پیشنهادهای ویژه.");
   }
 });
 
@@ -476,6 +500,7 @@ bot.on("text", async (ctx, next) => {
   const menuButtons = [
     "🛍 مشاهده محصولات",
     "🔍 جستجوی محصول",
+    "🔥 پیشنهاد ویژه",
     "📄 دریافت لیست کامل قیمت",
     "🛒 سبد خرید",
     "📦 سفارش‌های من",
