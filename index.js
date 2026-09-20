@@ -37,7 +37,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 const users = new Map();
 const searchMode = new Map();
-const orderTrackState = new Map(); // telegramId -> { step: "order_id" | "phone", orderId }
+const orderTrackState = new Map(); // telegramId -> { step: "order_id" }
 
 // =====================================
 // ثبت هر کاربری که با ربات تعامل داره
@@ -518,7 +518,7 @@ bot.on("text", async (ctx, next) => {
     return next();
   }
 
-  // حالت پیگیری سفارش (مرحلهٔ کد سفارش / شماره موبایل)
+  // حالت پیگیری سفارش (فقط کد سفارش؛ شماره از قبل ثبت‌شده)
   if (orderTrackState.has(ctx.from.id)) {
     const state = orderTrackState.get(ctx.from.id);
 
@@ -529,24 +529,23 @@ bot.on("text", async (ctx, next) => {
         return ctx.reply("⚠️ لطفاً فقط عدد شمارهٔ سفارش رو وارد کنید.");
       }
 
-      orderTrackState.set(ctx.from.id, { step: "phone", orderId });
-
-      return ctx.reply(
-        "📱 حالا شماره موبایلی که سفارش رو با آن ثبت کرده‌اید وارد کنید:"
-      );
-    }
-
-    if (state.step === "phone") {
-      const phone = normalizePhone(text);
-
       orderTrackState.delete(ctx.from.id);
 
+      const userData = users.get(ctx.from.id);
+
+      if (!userData?.phone) {
+        await ctx.reply(
+          "⚠️ برای پیگیری سفارش، اول باید شمارهٔ موبایلتون رو ثبت کنید."
+        );
+        return showMainMenu(ctx);
+      }
+
       try {
-        const order = await getOrderByIdAndPhone(state.orderId, phone);
+        const order = await getOrderByIdAndPhone(orderId, userData.phone);
 
         if (!order) {
           await ctx.reply(
-            "❌ سفارشی با این شماره سفارش و شماره موبایل پیدا نشد.\n\nلطفاً از صحت کد سفارش و شماره موبایل مطمئن شوید."
+            "❌ سفارشی با این شماره سفارش، مرتبط با شمارهٔ موبایل ثبت‌شدهٔ شما پیدا نشد.\n\nلطفاً از صحت کد سفارش مطمئن شوید."
           );
           return showMainMenu(ctx);
         }
@@ -673,12 +672,28 @@ bot.hears("📦 سفارش‌های من", (ctx) => {
 bot.action("track_order_start", async (ctx) => {
   await ctx.answerCbQuery();
 
+  const userData = users.get(ctx.from.id);
+
+  if (!userData?.phone) {
+    return ctx.reply(
+      "⚠️ برای پیگیری سفارش، اول باید شمارهٔ موبایلتون رو ثبت کنید.",
+      Markup.inlineKeyboard([
+        [Markup.button.callback("📱 ثبت شماره من", "register_phone_from_order")],
+      ])
+    );
+  }
+
   orderTrackState.set(ctx.from.id, { step: "order_id" });
 
   return ctx.reply(
     "🔎 لطفاً شمارهٔ سفارش (کد فاکتور) را وارد کنید:\n\nمثلاً: 1024",
     Markup.keyboard([["🔙 بازگشت به منوی اصلی"]]).resize()
   );
+});
+
+bot.action("register_phone_from_order", async (ctx) => {
+  await ctx.answerCbQuery();
+  return requestPhone(ctx);
 });
 
 // =====================================
