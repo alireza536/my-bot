@@ -120,6 +120,13 @@ async function recordSeenUser(telegramId, info = {}) {
   recordedThisRun.add(telegramId);
 
   try {
+    // اگه قبلاً ثبت شده، تاریخ اولین بازدیدش رو نگه می‌داریم
+    // و فقط آخرین بازدید رو آپدیت می‌کنیم.
+    const existingRaw = await client.hget(SEEN_USERS_KEY, String(telegramId));
+    const existing = existingRaw ? JSON.parse(existingRaw) : null;
+
+    const now = new Date().toISOString();
+
     await client.hset(
       SEEN_USERS_KEY,
       String(telegramId),
@@ -128,7 +135,8 @@ async function recordSeenUser(telegramId, info = {}) {
         firstName: info.firstName || null,
         lastName: info.lastName || null,
         username: info.username || null,
-        lastSeenAt: new Date().toISOString(),
+        firstSeenAt: existing?.firstSeenAt || now,
+        lastSeenAt: now,
       })
     );
   } catch (err) {
@@ -165,11 +173,29 @@ async function getAllSeenUserIds() {
   }
 }
 
+// جزئیات کامل همهٔ کاربرهای دیده‌شده (برای آمار دقیق‌تر
+// مثل تعداد کاربر جدید امروز/این هفته)
+async function getSeenUsersDetailed() {
+  if (!isEnabled) return [];
+
+  try {
+    const all = await client.hgetall(SEEN_USERS_KEY);
+    return Object.values(all).map((raw) => JSON.parse(raw));
+  } catch (err) {
+    console.error(
+      "⚠️ [Store] خطا در دریافت جزئیات کاربرها:",
+      err.message
+    );
+    return [];
+  }
+}
+
 module.exports = {
   saveUsers,
   loadUsers,
   recordSeenUser,
   getSeenUsersCount,
   getAllSeenUserIds,
+  getSeenUsersDetailed,
   isEnabled,
 };

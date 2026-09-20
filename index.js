@@ -18,7 +18,7 @@ const {
   HAMKAR_PRICE_KEYS,
 } = require("./woocommerce");
 
-const { saveUsers, loadUsers, recordSeenUser, getSeenUsersCount, getAllSeenUserIds } = require("./store");
+const { saveUsers, loadUsers, recordSeenUser, getSeenUsersCount, getAllSeenUserIds, getSeenUsersDetailed } = require("./store");
 
 // آیدی عددی تلگرام مدیر (برای دسترسی به دستورات مخفی مثل /priceaudit)
 // این عدد رو از لاگ‌های قبلی ربات (بخش [Telegram] ... telegramId) پیدا کردم.
@@ -252,12 +252,37 @@ bot.command("stats", async (ctx) => {
   }
 
   try {
-    const totalSeen = await getSeenUsersCount();
+    const allUsers = await getSeenUsersDetailed();
     const totalRegistered = users.size;
+
+    const now = new Date();
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+    const startOfWeek = new Date(startOfToday);
+    startOfWeek.setDate(startOfWeek.getDate() - 7);
+
+    let newToday = 0;
+    let newThisWeek = 0;
+    let activeToday = 0;
+
+    for (const u of allUsers) {
+      const firstSeen = u.firstSeenAt ? new Date(u.firstSeenAt) : null;
+      const lastSeen = u.lastSeenAt ? new Date(u.lastSeenAt) : null;
+
+      if (firstSeen && firstSeen >= startOfToday) newToday++;
+      if (firstSeen && firstSeen >= startOfWeek) newThisWeek++;
+      if (lastSeen && lastSeen >= startOfToday) activeToday++;
+    }
 
     await ctx.reply(
       `📊 آمار ربات:\n\n` +
-        `👥 کل کاربرهایی که با ربات تعامل داشتن: ${totalSeen}\n` +
+        `👥 کل کاربرهای منحصربه‌فرد تا الان: ${allUsers.length}\n` +
+        `🆕 کاربر جدید امروز: ${newToday}\n` +
+        `📅 کاربر جدید طی ۷ روز اخیر: ${newThisWeek}\n` +
+        `⚡️ فعال (پیام زده) امروز: ${activeToday}\n` +
         `📱 کسایی که شماره‌شون رو ثبت کردن: ${totalRegistered}`
     );
   } catch (err) {
