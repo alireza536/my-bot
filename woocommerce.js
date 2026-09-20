@@ -120,7 +120,11 @@ async function getCategories() {
 // دریافت محصولات یک دسته
 // =====================================
 
-async function getProductsByCategory(categoryName, { includeOutOfStock = false } = {}) {
+// onlyOutOfStock: true → فقط محصولات ناموجود (برای «برام موجودش کن»)
+async function getProductsByCategory(
+  categoryName,
+  { includeOutOfStock = false, onlyOutOfStock = false } = {}
+) {
   try {
     const categories = await getCategories();
 
@@ -136,7 +140,9 @@ async function getProductsByCategory(categoryName, { includeOutOfStock = false }
       status: "publish",
     };
 
-    if (!includeOutOfStock) {
+    if (onlyOutOfStock) {
+      params.stock_status = "outofstock";
+    } else if (!includeOutOfStock) {
       params.stock_status = "instock";
     }
 
@@ -144,6 +150,7 @@ async function getProductsByCategory(categoryName, { includeOutOfStock = false }
 
     return data.filter((product) => {
       if (product.catalog_visibility === "hidden") return false;
+      if (onlyOutOfStock) return product.stock_status === "outofstock";
       if (!includeOutOfStock && product.stock_status !== "instock") return false;
       return true;
     });
@@ -158,13 +165,21 @@ async function getProductsByCategory(categoryName, { includeOutOfStock = false }
 }
 
 // =====================================
-// دریافت یک محصول با شناسه (برای چک کردن
-// موجودی در فرآیند پس‌زمینهٔ «خبرم کن»)
+// دریافت یک محصول با شناسه
+//
+// - اگه محصول وجود نداشت (404) → null
+// - اگه خطای دیگه‌ای بود (قطعی شبکه، ۵۰۰ و ...) → خطا پرتاب می‌شه
+//   (قبلاً null برمی‌گشت و از «محصول حذف شده» قابل تشخیص نبود)
+// - پارامتر _t و هدر no-cache برای اینکه کش سایت/CDN
+//   جواب قدیمی (ناموجود) رو برنگردونه
 // =====================================
 
 async function getProductById(productId) {
   try {
-    const { data } = await api.get(`/products/${productId}`);
+    const { data } = await api.get(`/products/${productId}`, {
+      params: { _t: Date.now() },
+      headers: { "Cache-Control": "no-cache" },
+    });
     return data;
   } catch (err) {
     if (err.response?.status === 404) return null;
@@ -173,8 +188,38 @@ async function getProductById(productId) {
       "Get Product Error:",
       err.response?.data || err.message
     );
-    return null;
+    throw err;
   }
+}
+
+// =====================================
+// دریافت چند محصول با یک درخواست (برای چک دورهٔ «خبرم کن»)
+// به‌جای اینکه برای هر محصول یه درخواست جدا بزنیم،
+// همه رو یکجا با پارامتر include می‌گیریم.
+// محصولی که حذف شده باشه اصلاً تو خروجی نمیاد.
+// اگه خطا بده، پرتاب می‌شه تا چک‌کننده گزارشش کنه.
+// =====================================
+
+async function getProductsByIds(ids = []) {
+  const uniqueIds = [...new Set(ids.map(Number).filter(Boolean))];
+  const result = [];
+
+  for (let i = 0; i < uniqueIds.length; i += 100) {
+    const chunk = uniqueIds.slice(i, i + 100);
+
+    const { data } = await api.get("/products", {
+      params: {
+        include: chunk.join(","),
+        per_page: 100,
+        _t: Date.now(), // دور زدن کش
+      },
+      headers: { "Cache-Control": "no-cache" },
+    });
+
+    result.push(...data);
+  }
+
+  return result;
 }
 
 // =====================================
@@ -710,4 +755,5 @@ module.exports = {
   getOrderByIdAndPhone,
   getOrderStatusLabel,
   getProductById,
+  getProductsByIds,
 };

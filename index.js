@@ -29,9 +29,6 @@ const {
   getSeenUsersCount,
   getAllSeenUserIds,
   getSeenUsersDetailed,
-  addStockWatcher,
-  getAllStockWatches,
-  clearStockWatch,
 } = require("./store");
 
 // آیدی عددی تلگرام مدیر (برای دسترسی به دستورات مخفی مثل /priceaudit)
@@ -49,7 +46,34 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const users = new Map();
 const searchMode = new Map();
 const orderTrackState = new Map(); // telegramId -> { step: "order_id" }
-const stockCheckMode = new Map(); // telegramId -> true (منتظر انتخاب دسته‌بندی برای وضعیت موجودی)
+const stockCheckMode = new Map(); // telegramId -> true (منتظر انتخاب دسته‌بندی برای «برام موجودش کن»)
+
+// درخواست «برام موجودش کن» در حال تکمیل:
+// telegramId -> { step: "phone" | "quantity", productId, productName, permalink }
+const stockRequestState = new Map();
+
+// کسایی که پیام درخواست موجودی براشون میاد (آیدی عددی تلگرام).
+// اگه خواستی همکار دیگه‌ای هم پیام رو بگیره، آیدی عددیش رو به این لیست اضافه کن.
+const STOCK_REQUEST_RECEIVERS = [ADMIN_TELEGRAM_ID];
+
+// متن دکمه‌های منو (برای اینکه وسط ثبت درخواست، با زدن هر دکمهٔ منو، درخواست ناتموم کنسل بشه)
+const MENU_BUTTONS = [
+  "🛍 مشاهده محصولات",
+  "🔍 جستجوی محصول",
+  "🔥 پیشنهاد ویژه",
+  "🙋 برام موجودش کن",
+  "📄 دریافت لیست کامل قیمت",
+  "🛒 سبد خرید",
+  "📦 سفارش‌های من",
+  "📞 پشتیبانی",
+  "🔐 احراز هویت",
+  "📱 ثبت شماره من",
+  "📱 ارسال شماره موبایل",
+  "👨‍💼 آقای محمدی",
+  "👩‍💼 خانم حسین‌زاده",
+  "🛡 مسئول گارانتی",
+  "🔙 بازگشت به منوی اصلی",
+];
 
 // =====================================
 // ثبت هر کاربری که با ربات تعامل داره
@@ -68,6 +92,18 @@ bot.use((ctx, next) => {
   return next();
 });
 
+// اگه کاربر وسط ثبت درخواست «برام موجودش کن» یکی از دکمه‌های منو
+// یا یه دستور (مثل /start) رو زد، درخواست ناتموم کنسل می‌شه
+bot.use((ctx, next) => {
+  const t = ctx.message?.text;
+
+  if (ctx.from && t && (t.startsWith("/") || MENU_BUTTONS.includes(t))) {
+    stockRequestState.delete(ctx.from.id);
+  }
+
+  return next();
+});
+
 // =====================================
 // منوی اصلی
 // =====================================
@@ -76,6 +112,7 @@ function showMainMenu(ctx) {
   searchMode.delete(ctx.from.id);
   orderTrackState.delete(ctx.from.id);
   stockCheckMode.delete(ctx.from.id);
+  stockRequestState.delete(ctx.from.id);
 
   return ctx.reply(
     "🛍 *به فروشگاه TAKORG خوش آمدید*\n\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
@@ -83,7 +120,7 @@ function showMainMenu(ctx) {
       parse_mode: "Markdown",
       ...Markup.keyboard([
         ["🛍 مشاهده محصولات", "🔍 جستجوی محصول"],
-        ["🔥 پیشنهاد ویژه", "📋 وضعیت موجودی"],
+        ["🔥 پیشنهاد ویژه", "🙋 برام موجودش کن"],
         ["📄 دریافت لیست کامل قیمت"],
         ["🛒 سبد خرید", "📦 سفارش‌های من"],
         ["📞 پشتیبانی", "🔐 احراز هویت"],
@@ -97,9 +134,12 @@ function showMainMenu(ctx) {
 // درخواست شماره موبایل
 // =====================================
 
-function requestPhone(ctx) {
+function requestPhone(
+  ctx,
+  message = "📱 برای ثبت شماره موبایل خود در سیستم، دکمهٔ زیر را بزنید."
+) {
   return ctx.reply(
-    "📱 برای ثبت شماره موبایل خود در سیستم، دکمهٔ زیر را بزنید.",
+    message,
     Markup.keyboard([
       [
         Markup.button.contactRequest("📱 ارسال شماره موبایل")
@@ -138,6 +178,7 @@ bot.start(async (ctx) => {
   const telegramId = ctx.from.id;
 
   searchMode.delete(telegramId);
+  stockRequestState.delete(telegramId);
 
   await ctx.reply(
     "🛍 *به فروشگاه TAKORG خوش آمدید*",
@@ -192,6 +233,15 @@ bot.on("contact", async (ctx) => {
     saveUsers(users);
 
     await ctx.reply("✅ شماره شما با موفقیت ثبت شد.");
+
+    // اگه کاربر وسط «برام موجودش کن» بود و شمارهٔ ثبت‌شده نداشت،
+    // به‌جای منوی اصلی، ثبت درخواست رو ادامه بده (مرحلهٔ تعداد)
+    const pending = stockRequestState.get(telegramId);
+
+    if (pending && pending.step === "phone") {
+      pending.step = "quantity";
+      return askQuantity(ctx, pending);
+    }
 
     return showMainMenu(ctx);
   } catch (err) {
@@ -250,10 +300,11 @@ bot.hears("🔥 پیشنهاد ویژه", async (ctx) => {
 });
 
 // =====================================
-// وضعیت موجودی (موجود + ناموجود با دکمه خبرم‌کن)
+// برام موجودش کن — انتخاب دسته‌بندی
+// (فقط محصولات ناموجود نمایش داده می‌شن)
 // =====================================
 
-bot.hears("📋 وضعیت موجودی", async (ctx) => {
+bot.hears("🙋 برام موجودش کن", async (ctx) => {
   try {
     const categories = await getCategories();
 
@@ -261,10 +312,12 @@ bot.hears("📋 وضعیت موجودی", async (ctx) => {
 
     buttons.push(["🔙 بازگشت به منوی اصلی"]);
 
+    searchMode.delete(ctx.from.id);
+    orderTrackState.delete(ctx.from.id);
     stockCheckMode.set(ctx.from.id, true);
 
     return ctx.reply(
-      "📋 برای دیدن وضعیت موجودی، یک دسته‌بندی را انتخاب کنید:",
+      "🙋 دسته‌بندی محصولی که ناموجوده رو انتخاب کنید تا محصولات ناموجودش رو ببینید:",
       Markup.keyboard(buttons).resize()
     );
   } catch (err) {
@@ -529,139 +582,298 @@ async function sendProduct(ctx, product) {
 }
 
 // =====================================
-// نمایش محصول در حالت «وضعیت موجودی»
-// (موجود/ناموجود + دکمهٔ خبرم‌کن برای ناموجودها)
+// ابزارهای کمکی «برام موجودش کن»
 // =====================================
 
-async function sendStockProduct(ctx, product) {
-  const role = "hamkar";
-  const price = getProductPrice(product, role);
+function decodeHtmlEntities(text = "") {
+  return String(text)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+
+function escapeHtml(text = "") {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// اسم محصول ووکامرس (ممکنه کاراکتر HTML داشته باشه) → متن امن برای parse_mode: HTML
+function safeText(text = "") {
+  return escapeHtml(decodeHtmlEntities(text));
+}
+
+// ارقام فارسی/عربی → انگلیسی
+function toEnglishDigits(text = "") {
+  return String(text)
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+}
+
+// از متن کاربر یه تعداد معتبر (۱ تا ۱۰۰۰۰۰) درمیاره؛ اگه نشد null
+function parseQuantity(text = "") {
+  const numbers = toEnglishDigits(text).match(/\d+/g);
+
+  if (!numbers || numbers.length !== 1) return null;
+
+  const quantity = Number(numbers[0]);
+
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000) {
+    return null;
+  }
+
+  return quantity;
+}
+
+// شمارهٔ نرمال‌شده (9123456789) → فرمت قابل‌نمایش (09123456789)
+function displayPhone(phone = "") {
+  const p = String(phone);
+  return /^9\d{9}$/.test(p) ? `0${p}` : p;
+}
+
+function askQuantity(ctx, state) {
+  return ctx.reply(
+    `🔢 چند عدد از «${decodeHtmlEntities(state.productName)}» نیاز دارید؟\n\nفقط تعداد رو به‌صورت عدد بفرستید (مثلاً 5).`,
+    Markup.keyboard([["🔙 بازگشت به منوی اصلی"]]).resize()
+  );
+}
+
+// =====================================
+// نمایش محصولِ ناموجود در حالت «برام موجودش کن»
+// (فقط ناموجودها + دکمهٔ درخواست)
+// =====================================
+
+async function sendOutOfStockProduct(ctx, product) {
+  const price = getProductPrice(product, "hamkar");
   const priceText = formatPrice(price);
 
-  const inStock = product.stock_status === "instock";
-  const statusLabel = inStock ? "✅ موجود" : "❌ ناموجود";
-
   const caption =
-    `🛍 *${product.name}*\n\n` +
-    `${statusLabel}\n` +
-    `💰 قیمت: *${priceText} تومان*`;
+    `🛍 <b>${safeText(product.name)}</b>\n\n` +
+    `❌ ناموجود\n` +
+    `💰 قیمت: <b>${priceText} تومان</b>`;
 
-  const buttonsRow = [
-    Markup.button.url("🛒 خرید از سایت", product.permalink),
-  ];
-
-  if (!inStock) {
-    buttonsRow.push(
-      Markup.button.callback("🔔 خبرم کن", `notify:${product.id}`)
-    );
-  }
+  const extra = {
+    parse_mode: "HTML",
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback("🙋 برام موجودش کن", `req:${product.id}`)],
+    ]),
+  };
 
   const image = product.images?.length ? product.images[0].src : null;
 
   if (image) {
-    return ctx.replyWithPhoto(image, {
-      caption,
-      parse_mode: "Markdown",
-      ...Markup.inlineKeyboard([buttonsRow]),
-    });
+    try {
+      return await ctx.replyWithPhoto(image, { caption, ...extra });
+    } catch (err) {
+      console.error(
+        `⚠️ [StockRequest] ارسال عکس محصول ${product.id} ناموفق بود؛ بدون عکس ارسال می‌شه:`,
+        err.message
+      );
+    }
   }
 
-  return ctx.reply(caption, {
-    parse_mode: "Markdown",
-    ...Markup.inlineKeyboard([buttonsRow]),
-  });
+  return ctx.reply(caption, extra);
 }
 
 // =====================================
-// دکمهٔ «خبرم کن» — ثبت اشتراک اطلاع‌رسانی موجودی
+// دکمهٔ «🙋 برام موجودش کن» روی یک محصول
+// مرحله ۱: (اگه شماره ثبت نشده) شماره بگیر
+// مرحله ۲: تعداد بگیر
+// مرحله ۳: پیام کامل برای مدیر بفرست
 // =====================================
 
-bot.action(/^notify:(\d+)$/, async (ctx) => {
-  const productId = ctx.match[1];
+bot.action(/^req:(\d+)$/, async (ctx) => {
+  const telegramId = ctx.from.id;
+  const productId = Number(ctx.match[1]);
 
   try {
-    const added = await addStockWatcher(Number(productId), ctx.from.id);
+    await ctx.answerCbQuery();
 
-    if (added) {
-      await ctx.answerCbQuery("ثبت شد ✅");
-      await ctx.reply(
-        "🔔 باشه! به‌محض اینکه این محصول موجود شد بهتون خبر می‌دیم."
+    let product;
+
+    try {
+      product = await getProductById(productId);
+    } catch (err) {
+      return ctx.reply(
+        "❌ خطا در دریافت اطلاعات محصول. لطفاً چند لحظه بعد دوباره امتحان کنید."
       );
-    } else {
-      await ctx.answerCbQuery("قبلاً ثبت شده بود");
     }
+
+    if (!product) {
+      return ctx.reply("❌ این محصول دیگه توی سایت پیدا نشد.");
+    }
+
+    // اگه بین نمایش لیست و زدن دکمه موجود شده باشه
+    if (product.stock_status === "instock") {
+      return ctx.reply(
+        `✅ خبر خوب! «${decodeHtmlEntities(product.name)}» همین الان موجود شده.`,
+        product.permalink
+          ? Markup.inlineKeyboard([
+              [Markup.button.url("🛒 خرید از سایت", product.permalink)],
+            ])
+          : {}
+      );
+    }
+
+    // حالت‌های دیگه‌ای که ممکنه فعال باشن رو ببند
+    searchMode.delete(telegramId);
+    orderTrackState.delete(telegramId);
+    stockCheckMode.delete(telegramId);
+
+    const state = {
+      step: "quantity",
+      productId: product.id,
+      productName: product.name,
+      permalink: product.permalink || null,
+    };
+
+    const userData = users.get(telegramId);
+
+    // شماره موبایل حتماً باید داشته باشیم تا بتونیم باهاش هماهنگ کنیم
+    if (!userData?.phone) {
+      state.step = "phone";
+      stockRequestState.set(telegramId, state);
+
+      return requestPhone(
+        ctx,
+        "📱 برای ثبت درخواست، لازمه شمارهٔ موبایلتون رو داشته باشیم تا بتونیم باهاتون هماهنگ کنیم.\n\nلطفاً دکمهٔ «ارسال شماره موبایل» رو بزنید."
+      );
+    }
+
+    stockRequestState.set(telegramId, state);
+
+    return askQuantity(ctx, state);
   } catch (err) {
-    console.error("Notify Subscribe Error:", err.message);
-    await ctx.answerCbQuery("❌ خطا، دوباره امتحان کنید");
+    console.error("Stock Request Action Error:", err.message);
+    return ctx.reply("❌ خطا در ثبت درخواست. لطفاً دوباره تلاش کنید.");
   }
 });
 
 // =====================================
-// چک دوره‌ای موجودی محصولات موردنظر
-// و اطلاع‌رسانی به کسایی که «خبرم کن» زدن
+// ارسال پیام درخواست برای مدیر
+// خروجی: تعداد گیرنده‌هایی که پیام بهشون رسید
 // =====================================
 
-const STOCK_CHECK_INTERVAL_MS = 15 * 60 * 1000; // هر ۱۵ دقیقه
+async function sendStockRequestToAdmins(ctx, state, quantity, phone) {
+  const from = ctx.from;
 
-async function checkStockWatches() {
-  const watches = await getAllStockWatches();
+  const fullName =
+    [from.first_name, from.last_name].filter(Boolean).join(" ") || "بدون نام";
 
-  const productIds = Object.keys(watches);
+  const usernameLine = from.username ? `@${from.username}` : "ندارد";
 
-  if (!productIds.length) return;
+  const time = new Date().toLocaleString("fa-IR", { timeZone: "Asia/Tehran" });
 
-  for (const productId of productIds) {
-    const product = await getProductById(productId);
+  const productLine = state.permalink
+    ? `<a href="${escapeHtml(state.permalink)}">${safeText(state.productName)}</a>`
+    : safeText(state.productName);
 
-    if (!product) continue;
+  const text =
+    `📥 <b>درخواست موجود کردن کالا</b>\n\n` +
+    `🛍 محصول: <b>${productLine}</b>\n` +
+    `🔢 تعداد درخواستی: <b>${quantity}</b>\n\n` +
+    `👤 نام: <a href="tg://user?id=${from.id}">${escapeHtml(fullName)}</a>\n` +
+    `🆔 آیدی تلگرام: ${escapeHtml(usernameLine)}\n` +
+    `🔢 آیدی عددی: <code>${from.id}</code>\n` +
+    `📞 شماره تماس: <code>${escapeHtml(displayPhone(phone))}</code>\n\n` +
+    `🕒 ${escapeHtml(time)}`;
 
-    if (product.stock_status === "instock") {
-      const watchers = watches[productId];
+  let delivered = 0;
 
-      for (const telegramId of watchers) {
-        try {
-          await bot.telegram.sendMessage(
-            telegramId,
-            `🎉 خبر خوب! محصول «${product.name}» موجود شد.`,
-            Markup.inlineKeyboard([
-              [Markup.button.url("🛒 خرید از سایت", product.permalink)],
-            ])
-          );
-        } catch (err) {
-          // مثلاً کاربر ربات رو بلاک کرده؛ نادیده می‌گیریم
-        }
-      }
-
-      await clearStockWatch(productId);
+  for (const receiverId of STOCK_REQUEST_RECEIVERS) {
+    try {
+      await bot.telegram.sendMessage(receiverId, text, {
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      });
+      delivered++;
+    } catch (err) {
+      console.error(
+        `❌ [StockRequest] ارسال درخواست به ${receiverId} ناموفق بود:`,
+        err.response?.description || err.message
+      );
     }
   }
-}
 
-setInterval(checkStockWatches, STOCK_CHECK_INTERVAL_MS);
+  console.log(
+    `📥 [StockRequest] محصول ${state.productId} (${decodeHtmlEntities(state.productName)}) | تعداد: ${quantity} | کاربر: ${from.id} | شماره: ${displayPhone(phone)} | تحویل به ${delivered} گیرنده`
+  );
+
+  return delivered;
+}
 
 bot.on("text", async (ctx, next) => {
   const text = ctx.message.text;
 
-  const menuButtons = [
-    "🛍 مشاهده محصولات",
-    "🔍 جستجوی محصول",
-    "🔥 پیشنهاد ویژه",
-    "📋 وضعیت موجودی",
-    "📄 دریافت لیست کامل قیمت",
-    "🛒 سبد خرید",
-    "📦 سفارش‌های من",
-    "📞 پشتیبانی",
-    "🔐 احراز هویت",
-    "📱 ثبت شماره من",
-    "📱 ارسال شماره موبایل",
-    "👨‍💼 آقای محمدی",
-    "👩‍💼 خانم حسین‌زاده",
-    "🛡 مسئول گارانتی",
-    "🔙 بازگشت به منوی اصلی",
-  ];
-
-  if (menuButtons.includes(text)) {
+  if (MENU_BUTTONS.includes(text)) {
     return next();
+  }
+
+  // حالت ثبت درخواست «برام موجودش کن» (مرحلهٔ شماره / تعداد)
+  const requestState = stockRequestState.get(ctx.from.id);
+
+  if (requestState) {
+    if (requestState.step === "phone") {
+      return ctx.reply(
+        "📱 لطفاً با دکمهٔ «ارسال شماره موبایل» شمارهٔ خودتون رو بفرستید.\n\nبرای انصراف، «🔙 بازگشت به منوی اصلی» رو بزنید."
+      );
+    }
+
+    const quantity = parseQuantity(text);
+
+    if (!quantity) {
+      return ctx.reply(
+        "⚠️ لطفاً فقط تعداد رو به‌صورت یه عدد بنویسید (مثلاً 5)."
+      );
+    }
+
+    try {
+      const userData = users.get(ctx.from.id);
+
+      // محافظ: اگه به هر دلیل شماره نبود، دوباره بگیر
+      if (!userData?.phone) {
+        requestState.step = "phone";
+
+        return requestPhone(
+          ctx,
+          "📱 قبل از ثبت درخواست، لطفاً شمارهٔ موبایلتون رو با دکمهٔ زیر بفرستید."
+        );
+      }
+
+      const delivered = await sendStockRequestToAdmins(
+        ctx,
+        requestState,
+        quantity,
+        userData.phone
+      );
+
+      if (!delivered) {
+        return ctx.reply(
+          "❌ متأسفانه ثبت درخواست انجام نشد. لطفاً چند دقیقه بعد دوباره تلاش کنید یا با پشتیبانی تماس بگیرید."
+        );
+      }
+
+      stockRequestState.delete(ctx.from.id);
+
+      await ctx.reply(
+        `✅ درخواست شما ثبت شد:\n\n` +
+          `🛍 محصول: ${decodeHtmlEntities(requestState.productName)}\n` +
+          `🔢 تعداد: ${quantity}\n` +
+          `📞 شماره تماس: ${displayPhone(userData.phone)}\n\n` +
+          `همکاران ما در اسرع وقت برای هماهنگی باهاتون تماس می‌گیرن 🙏`
+      );
+
+      return showMainMenu(ctx);
+    } catch (err) {
+      console.error("Stock Request Submit Error:", err.message);
+      return ctx.reply("❌ خطا در ثبت درخواست. لطفاً دوباره تلاش کنید.");
+    }
   }
 
   // حالت پیگیری سفارش (فقط کد سفارش؛ شماره از قبل ثبت‌شده)
@@ -740,28 +952,34 @@ bot.on("text", async (ctx, next) => {
     }
   }
 
-  // حالت وضعیت موجودی (موجود + ناموجود با دکمه خبرم‌کن)
+  // حالت «برام موجودش کن» (فقط محصولات ناموجودِ دسته‌بندی انتخاب‌شده)
   if (stockCheckMode.get(ctx.from.id)) {
     stockCheckMode.delete(ctx.from.id);
 
     try {
       const products = await getProductsByCategory(text, {
-        includeOutOfStock: true,
+        onlyOutOfStock: true,
       });
 
       if (!products.length) {
-        await ctx.reply("❌ محصولی توی این دسته‌بندی پیدا نشد.");
+        await ctx.reply(
+          "🎉 توی این دسته‌بندی محصول ناموجودی پیدا نشد."
+        );
         return showMainMenu(ctx);
       }
 
+      await ctx.reply(
+        `❌ ${products.length} محصول ناموجود توی این دسته‌بندی هست.\n\nروی «🙋 برام موجودش کن» زیر محصول موردنظرتون بزنید:`
+      );
+
       for (const product of products) {
-        await sendStockProduct(ctx, product);
+        await sendOutOfStockProduct(ctx, product);
       }
 
       return showMainMenu(ctx);
     } catch (err) {
-      console.error("Stock Status Error:", err.message);
-      await ctx.reply("❌ خطا در دریافت وضعیت موجودی.");
+      console.error("Out Of Stock List Error:", err.message);
+      await ctx.reply("❌ خطا در دریافت محصولات ناموجود.");
       return showMainMenu(ctx);
     }
   }
