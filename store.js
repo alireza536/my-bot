@@ -35,6 +35,21 @@ if (REDIS_URL) {
 
 const isEnabled = Boolean(client);
 
+// تست سلامت اتصال Redis (برای دستور /checkstock مدیر)
+// خروجی: { enabled, ok, error }
+async function pingStore() {
+  if (!isEnabled) {
+    return { enabled: false, ok: false, error: "REDIS_URL تنظیم نشده" };
+  }
+
+  try {
+    const res = await client.ping();
+    return { enabled: true, ok: res === "PONG", error: null };
+  } catch (err) {
+    return { enabled: true, ok: false, error: err.message };
+  }
+}
+
 // فقط فیلدهای سبک و ضروری رو نگه می‌داریم (نه کل آبجکت
 // خام ووکامرس) تا حجم داده کوچیک بمونه.
 function slimUser(userData) {
@@ -199,15 +214,29 @@ async function getSeenUsersDetailed() {
 const STOCK_WATCH_KEY = "takorg:bot:stock_watch";
 
 // اضافه کردن یه کاربر به لیست منتظرهای یه محصول
+//
+// خروجی (دقیقاً یکی از این‌ها):
+//   "added"    → با موفقیت ثبت شد
+//   "exists"   → این کاربر قبلاً برای این محصول ثبت شده بود
+//   "disabled" → Redis تنظیم نشده (REDIS_URL نیست) → هیچی ذخیره نشد
+//   "error"    → خطای اتصال/نوشتن روی Redis → هیچی ذخیره نشد
+//
+// (قبلاً هر دو حالت "disabled" و "exists" به‌صورت false برمی‌گشت و ربات
+// به کاربر می‌گفت «قبلاً ثبت شده بود» در حالی که اصلاً چیزی ذخیره نشده بود)
 async function addStockWatcher(productId, telegramId) {
-  if (!isEnabled) return false;
+  if (!isEnabled) {
+    console.error(
+      "❌ [Store] اشتراک «خبرم کن» ذخیره نشد: REDIS_URL تنظیم نشده."
+    );
+    return "disabled";
+  }
 
   try {
     const raw = await client.hget(STOCK_WATCH_KEY, String(productId));
     const watchers = raw ? JSON.parse(raw) : [];
 
     if (watchers.includes(telegramId)) {
-      return false; // قبلاً ثبت شده بود
+      return "exists";
     }
 
     watchers.push(telegramId);
@@ -218,37 +247,82 @@ async function addStockWatcher(productId, telegramId) {
       JSON.stringify(watchers)
     );
 
-    return true;
+    console.log(
+      `🔔 [Store] اشتراک ثبت شد → محصول ${productId} | کاربر ${telegramId} | مجموع منتظرهای این محصول: ${watchers.length}`
+    );
+
+    return "added";
   } catch (err) {
     console.error("⚠️ [Store] خطا در ثبت اشتراک موجودی:", err.message);
-    return false;
+    return "error";
   }
 }
 
 // همهٔ محصولاتی که یه نفر منتظرشونه، به همراه لیست منتظرها
 // (برای چک دوره‌ای موجودی در پس‌زمینه)
+//
+// خروجی: { "123": [telegramId, ...], ... }
+// اگه Redis خطا بده، به‌جای {} خطا پرتاب می‌شه تا چک‌کننده
+// بتونه خطا رو گزارش کنه (نه اینکه فکر کنه کسی منتظر نیست)
 async function getAllStockWatches() {
   if (!isEnabled) return {};
 
-  try {
-    const all = await client.hgetall(STOCK_WATCH_KEY);
-    const result = {};
+  const all = await client.hgetall(STOCK_WATCH_KEY);
+  const result = {};
 
-    for (const productId of Object.keys(all)) {
-      result[productId] = JSON.parse(all[productId]);
+  for (const productId of Object.keys(all)) {
+    try {
+      const list = JSON.parse(all[productId]);
+      if (Array.isArray(list) && list.length) {
+        result[productId] = list;
+      }
+    } catch (err) {
+      console.error(
+        `⚠️ [Store] دادهٔ خراب برای اشتراک محصول ${productId}:`,
+        err.message
+      );
     }
+  }
 
-    return result;
+  return result;
+}
+
+// حذف «فقط» چند نفر مشخص از لیست منتظرهای یه محصول.
+// (اونایی که پیام بهشون رسید یا ربات رو بلاک کردن)
+// بقیه — و کسایی که همین الان تازه ثبت‌نام کردن — سر جاشون می‌مونن.
+// اگه لیست خالی شد، کل کلید پاک می‌شه.
+async function removeStockWatchers(productId, telegramIds = []) {
+  if (!isEnabled || !telegramIds.length) return;
+
+  try {
+    // لیست تازه رو دوباره می‌خونیم تا اگه بین چک و حذف
+    // کسی ثبت‌نام کرده بود، از دست نره
+    const raw = await client.hget(STOCK_WATCH_KEY, String(productId));
+
+    if (!raw) return;
+
+    const toRemove = new Set(telegramIds.map(Number));
+    const left = JSON.parse(raw).filter((id) => !toRemove.has(Number(id)));
+
+    if (left.length === 0) {
+      await client.hdel(STOCK_WATCH_KEY, String(productId));
+    } else {
+      await client.hset(
+        STOCK_WATCH_KEY,
+        String(productId),
+        JSON.stringify(left)
+      );
+    }
   } catch (err) {
     console.error(
-      "⚠️ [Store] خطا در دریافت لیست اشتراک‌های موجودی:",
+      "⚠️ [Store] خطا در حذف منتظرها از اشتراک موجودی:",
       err.message
     );
-    return {};
   }
 }
 
-// بعد از اطلاع‌رسانی، اشتراک یه محصول کامل پاک می‌شه
+// پاک‌کردن کامل اشتراک یه محصول (فعلاً استفاده نمی‌شه؛
+// برای پاک‌سازی دستی نگه داشته شده)
 async function clearStockWatch(productId) {
   if (!isEnabled) return;
 
@@ -271,6 +345,8 @@ module.exports = {
   getSeenUsersDetailed,
   addStockWatcher,
   getAllStockWatches,
+  removeStockWatchers,
   clearStockWatch,
+  pingStore,
   isEnabled,
 };

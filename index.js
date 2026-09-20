@@ -20,6 +20,7 @@ const {
   getOrderStatusLabel,
   getSaleProducts,
   getProductById,
+  getProductsByIds,
 } = require("./woocommerce");
 
 const {
@@ -29,6 +30,10 @@ const {
   getSeenUsersCount,
   getAllSeenUserIds,
   getSeenUsersDetailed,
+  addStockWatcher,
+  getAllStockWatches,
+  removeStockWatchers,
+  pingStore,
 } = require("./store");
 
 // آیدی عددی تلگرام مدیر (برای دسترسی به دستورات مخفی مثل /priceaudit)
@@ -808,6 +813,253 @@ async function sendStockRequestToAdmins(ctx, state, quantity, phone) {
   return delivered;
 }
 
+// =====================================
+// ارسال پیام ساده به مدیر(ها)
+// =====================================
+
+async function notifyAdmins(text) {
+  for (const receiverId of STOCK_REQUEST_RECEIVERS) {
+    try {
+      await bot.telegram.sendMessage(receiverId, text);
+    } catch (err) {
+      console.error(
+        `❌ [Admin] ارسال پیام به ${receiverId} ناموفق بود:`,
+        err.response?.description || err.message
+      );
+    }
+  }
+}
+
+// =====================================
+// چک دوره‌ای موجودی محصولات درخواست‌شده
+// و اطلاع‌رسانی خودکار به کسایی که درخواست «برام موجودش کن» دادن
+// (اگه ما محصول رو موجود کنیم و باهاشون هماهنگ نکرده باشیم)
+// =====================================
+
+const STOCK_CHECK_INTERVAL_MS = 2 * 60 * 1000; // هر ۲ دقیقه
+const STOCK_CHECK_FIRST_DELAY_MS = 20 * 1000; // اولین چک، ۲۰ ثانیه بعد از بالا اومدن ربات
+
+let stockCheckRunning = false; // جلوگیری از هم‌پوشانی دو چک همزمان
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ارسال پیام «موجود شد» به یک نفر
+// خروجی:
+//   "sent"   → پیام رسید
+//   "remove" → کاربر ربات رو بلاک کرده / چت وجود نداره → دیگه تلاش نکن
+//   "keep"   → خطای موقتی (شبکه، محدودیت تلگرام و ...) → دفعهٔ بعد دوباره تلاش کن
+async function notifyWatcher(telegramId, product) {
+  try {
+    const extra = product.permalink
+      ? Markup.inlineKeyboard([
+          [Markup.button.url("🛒 خرید از سایت", product.permalink)],
+        ])
+      : {};
+
+    await bot.telegram.sendMessage(
+      telegramId,
+      `🎉 خبر خوب! محصول «${decodeHtmlEntities(product.name)}» که درخواستش رو داده بودید موجود شد.`,
+      extra
+    );
+
+    return "sent";
+  } catch (err) {
+    const code = err.response?.error_code ?? err.code;
+    const description = String(err.response?.description || err.message || "");
+
+    if (code === 403 || (code === 400 && /chat not found/i.test(description))) {
+      console.log(
+        `ℹ️ [StockWatch] کاربر ${telegramId} ربات رو بلاک کرده یا چت پیدا نشد؛ از لیست حذف می‌شه.`
+      );
+      return "remove";
+    }
+
+    console.error(
+      `⚠️ [StockWatch] ارسال پیام به ${telegramId} ناموفق بود (بعداً دوباره تلاش می‌شه):`,
+      description
+    );
+    return "keep";
+  }
+}
+
+// چک کامل: همهٔ محصولات تحت نظر رو با یک درخواست از ووکامرس می‌گیره،
+// برای هر محصولِ موجودشده به منتظرها پیام می‌ده و «فقط» اونایی رو که
+// پیامشون رسیده (یا بلاک کردن) از لیست حذف می‌کنه.
+async function checkStockWatches() {
+  const report = {
+    skipped: false,
+    error: null,
+    watchedProducts: 0,
+    restocked: 0,
+    sent: 0,
+    kept: 0,
+    removed: 0,
+    lines: [],
+  };
+
+  if (stockCheckRunning) {
+    report.skipped = true;
+    return report;
+  }
+
+  stockCheckRunning = true;
+
+  try {
+    const watches = await getAllStockWatches();
+    const productIds = Object.keys(watches);
+
+    report.watchedProducts = productIds.length;
+
+    if (!productIds.length) return report;
+
+    const products = await getProductsByIds(productIds);
+    const byId = new Map(products.map((p) => [String(p.id), p]));
+
+    for (const productId of productIds) {
+      const watchers = watches[productId];
+      const product = byId.get(String(productId));
+
+      if (!product) {
+        report.lines.push(
+          `#${productId}: ❓ توی ووکامرس پیدا نشد (حذف شده؟) | منتظرها: ${watchers.length}`
+        );
+        continue;
+      }
+
+      const isInStock = product.stock_status === "instock";
+      const isPublished = product.status === "publish";
+
+      report.lines.push(
+        `#${productId} ${decodeHtmlEntities(product.name)}\n   وضعیت موجودی: ${product.stock_status} | وضعیت انتشار: ${product.status} | منتظرها: ${watchers.length}`
+      );
+
+      // فقط وقتی هم موجوده و هم منتشر شده (لینک خرید کار می‌کنه) خبر بده
+      if (!isInStock || !isPublished) continue;
+
+      report.restocked++;
+
+      const finished = []; // اونایی که دیگه نباید تو لیست بمونن
+
+      for (const telegramId of watchers) {
+        const result = await notifyWatcher(telegramId, product);
+
+        if (result === "sent") {
+          report.sent++;
+          finished.push(telegramId);
+        } else if (result === "remove") {
+          report.removed++;
+          finished.push(telegramId);
+        } else {
+          report.kept++;
+        }
+
+        // مکث کوچیک برای رعایت محدودیت تلگرام
+        await sleep(50);
+      }
+
+      await removeStockWatchers(productId, finished);
+    }
+  } catch (err) {
+    report.error = err.response?.data?.message || err.message;
+    console.error(
+      "❌ [StockWatch] خطا در چک موجودی:",
+      err.response?.data || err.message
+    );
+  } finally {
+    stockCheckRunning = false;
+  }
+
+  return report;
+}
+
+// اجرای زمان‌بندی‌شده + لاگ خلاصه (تا تو لاگ‌های Render معلوم باشه کار می‌کنه)
+async function runScheduledStockCheck() {
+  const report = await checkStockWatches();
+
+  if (report.skipped) return;
+
+  if (report.error) {
+    console.error(`❌ [StockWatch] چک ناموفق: ${report.error}`);
+    return;
+  }
+
+  if (report.watchedProducts > 0) {
+    console.log(
+      `🔔 [StockWatch] ${report.watchedProducts} محصول تحت نظر | موجودشده: ${report.restocked} | ارسال موفق: ${report.sent} | بلاک/حذف: ${report.removed} | تلاش مجدد: ${report.kept}`
+    );
+  }
+}
+
+setTimeout(runScheduledStockCheck, STOCK_CHECK_FIRST_DELAY_MS);
+setInterval(runScheduledStockCheck, STOCK_CHECK_INTERVAL_MS);
+
+// =====================================
+// چک دستی موجودی + گزارش تشخیصی (فقط برای مدیر)
+// نشون می‌ده Redis وصله یا نه، چند محصول تحت نظره و وضعیت هرکدوم چیه.
+// توجه: این دستور یه چک «واقعی» انجام می‌ده، یعنی اگه محصولی
+// موجود شده باشه، همین الان به منتظرها پیام می‌ده.
+// =====================================
+
+bot.command("checkstock", async (ctx) => {
+  if (ctx.from.id !== ADMIN_TELEGRAM_ID) {
+    return; // بی‌صدا نادیده بگیر، این دستور مخفیه
+  }
+
+  await ctx.reply("⏳ در حال چک موجودی محصولات تحت نظر...");
+
+  try {
+    const store = await pingStore();
+
+    const storeLine = !store.enabled
+      ? "❌ Redis: غیرفعال (متغیر REDIS_URL تنظیم نشده)"
+      : store.ok
+      ? "✅ Redis: وصله"
+      : `❌ Redis: وصل نیست (${store.error})`;
+
+    const report = await checkStockWatches();
+
+    if (report.skipped) {
+      return ctx.reply(
+        "⏳ یه چک دیگه همین الان در حال اجراست؛ چند ثانیه بعد دوباره امتحان کن."
+      );
+    }
+
+    let text =
+      `📋 گزارش چک موجودی\n\n` +
+      `${storeLine}\n` +
+      `📦 محصولات تحت نظر: ${report.watchedProducts}\n` +
+      `🟢 موجودشده در این چک: ${report.restocked}\n` +
+      `📨 پیام ارسال‌شده: ${report.sent}\n` +
+      `🚫 حذف‌شده (بلاک/چت ناموجود): ${report.removed}\n` +
+      `🔁 ارسال ناموفق (بعداً تلاش می‌شه): ${report.kept}\n`;
+
+    if (report.error) {
+      text += `\n❌ خطا: ${report.error}\n`;
+    }
+
+    if (!report.watchedProducts && !report.error) {
+      text +=
+        "\nℹ️ هیچ محصولی تحت نظر نیست (هنوز درخواستی ثبت نشده، یا قبلاً اطلاع‌رسانی شده و پاک شده).";
+    }
+
+    if (report.lines.length) {
+      text += `\n${report.lines.slice(0, 20).join("\n")}`;
+
+      if (report.lines.length > 20) {
+        text += `\n... و ${report.lines.length - 20} مورد دیگه`;
+      }
+    }
+
+    // سقف طول پیام تلگرام
+    return ctx.reply(text.slice(0, 4000));
+  } catch (err) {
+    console.error("CheckStock Command Error:", err.message);
+    return ctx.reply("❌ خطا در چک موجودی: " + err.message);
+  }
+});
+
 bot.on("text", async (ctx, next) => {
   const text = ctx.message.text;
 
@@ -860,6 +1112,23 @@ bot.on("text", async (ctx, next) => {
       }
 
       stockRequestState.delete(ctx.from.id);
+
+      // همزمان، کاربر رو تو لیست «خبرم کن» هم می‌ذاریم: اگه ما محصول رو موجود کردیم
+      // و باهاش هماهنگ نکردیم، خود ربات بهش خبر می‌ده (چک دوره‌ای پایین‌تر)
+      const watchResult = await addStockWatcher(
+        requestState.productId,
+        ctx.from.id
+      );
+
+      if (watchResult !== "added" && watchResult !== "exists") {
+        console.error(
+          `❌ [StockRequest] کاربر ${ctx.from.id} تو لیست اطلاع‌رسانی خودکار محصول ${requestState.productId} ثبت نشد (${watchResult}).`
+        );
+
+        await notifyAdmins(
+          `⚠️ درخواست بالا ثبت شد ولی کاربر ${ctx.from.id} تو لیست اطلاع‌رسانی خودکار نرفت (${watchResult}؛ احتمالاً Redis وصل نیست). یعنی اگه محصول موجود بشه، ربات خودکار بهش خبر نمی‌ده.`
+        );
+      }
 
       await ctx.reply(
         `✅ درخواست شما ثبت شد:\n\n` +
