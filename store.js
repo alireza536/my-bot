@@ -337,6 +337,65 @@ async function clearStockWatch(productId) {
 }
 
 // =====================================
+// اخیراً مشاهده‌شده‌ها
+// برای هر کاربر یه List توی Redis:
+//   کلید = takorg:bot:recent:<telegramId>
+// همیشه جدیدترین محصول اول لیسته؛ اگه محصولی دوباره دیده بشه
+// میره بالای لیست (تکراری نمی‌مونه)
+// =====================================
+
+const RECENT_KEY_PREFIX = "takorg:bot:recent:";
+const MAX_RECENTLY_VIEWED = 10;
+
+function recentKey(telegramId) {
+  return `${RECENT_KEY_PREFIX}${telegramId}`;
+}
+
+// ثبت بازدید یه محصول. عمداً بی‌صدا (بدون throw) کار می‌کنه چون
+// معمولاً بدون await صدا زده می‌شه تا نمایش محصول کند نشه.
+async function recordRecentlyViewed(telegramId, productId) {
+  if (!isEnabled) return;
+
+  try {
+    const key = recentKey(telegramId);
+    const member = String(productId);
+
+    // اگه قبلاً تو لیست بوده، حذفش کن تا بعد از LPUSH بره بالا
+    // (بدون اینکه دوبار تو لیست باشه)
+    await client.lrem(key, 0, member);
+    await client.lpush(key, member);
+    await client.ltrim(key, 0, MAX_RECENTLY_VIEWED - 1);
+  } catch (err) {
+    console.error("⚠️ [Store] خطا در ثبت اخیراً مشاهده‌شده:", err.message);
+  }
+}
+
+// شناسهٔ محصولاتی که کاربر اخیراً دیده (جدیدترین اول)
+// خروجی: { status: "ok" | "disabled" | "error", ids: number[] }
+async function getRecentlyViewed(telegramId) {
+  if (!isEnabled) return { status: "disabled", ids: [] };
+
+  try {
+    const raw = await client.lrange(
+      recentKey(telegramId),
+      0,
+      MAX_RECENTLY_VIEWED - 1
+    );
+
+    return {
+      status: "ok",
+      ids: raw.map(Number).filter((n) => Number.isFinite(n)),
+    };
+  } catch (err) {
+    console.error(
+      "⚠️ [Store] خطا در دریافت اخیراً مشاهده‌شده‌ها:",
+      err.message
+    );
+    return { status: "error", ids: [] };
+  }
+}
+
+// =====================================
 // علاقه‌مندی‌ها (لیست محصولات مورد علاقهٔ هر کاربر)
 // برای هر کاربر یه Sorted Set توی Redis:
 //   کلید  = takorg:bot:favorites:<telegramId>
@@ -433,5 +492,7 @@ module.exports = {
   removeFavorite,
   getFavorites,
   MAX_FAVORITES,
+  recordRecentlyViewed,
+  getRecentlyViewed,
   isEnabled,
 };

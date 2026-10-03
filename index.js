@@ -29,6 +29,8 @@ const {
   loadUsers,
   recordSeenUser,
   getSeenUsersCount,
+  recordRecentlyViewed,
+  getRecentlyViewed,
   getAllSeenUserIds,
   getSeenUsersDetailed,
   addStockWatcher,
@@ -74,6 +76,7 @@ const MENU_BUTTONS = [
   "🆕 محصولات جدید",
   "🙋 برام موجودش کن",
   "❤️ علاقه‌مندی‌های من",
+  "👀 اخیراً مشاهده‌شده‌ها",
   "📄 دریافت لیست کامل قیمت",
   "🛒 سبد خرید",
   "📦 سفارش‌های من",
@@ -155,6 +158,7 @@ function showOtherMenu(ctx) {
     "☰ سایر گزینه‌ها:",
     Markup.keyboard([
       ["🙋 برام موجودش کن", "❤️ علاقه‌مندی‌های من"],
+      ["👀 اخیراً مشاهده‌شده‌ها"],
       ["📄 دریافت لیست کامل قیمت"],
       ["📞 پشتیبانی", "🔐 احراز هویت"],
       ["📱 ثبت شماره من"],
@@ -343,6 +347,8 @@ bot.hears("🔥 پیشنهاد ویژه", async (ctx) => {
 // نمایش یک محصول در لیست «محصولات جدید»
 // (عکس + نام + قیمت متناسب با کاربر + وضعیت موجودی + دکمهٔ مشاهده در سایت)
 async function sendLatestProduct(ctx, product, favSet) {
+  recordRecentlyViewed(ctx.from.id, product.id); // بدون await تا نمایش کند نشه
+
   const price = getProductPrice(product, "hamkar");
   const priceText = formatPrice(price);
 
@@ -635,6 +641,8 @@ bot.command("priceaudit", async (ctx) => {
 async function sendProduct(ctx, product, favSet = null) {
   const telegramId = ctx.from.id;
 
+  recordRecentlyViewed(telegramId, product.id); // بدون await تا نمایش کند نشه
+
   const userData = users.get(telegramId);
 
   // احراز هویت اولیه حذف شده؛ همه کاربرها قیمت همکاری می‌بینند.
@@ -813,6 +821,8 @@ bot.action(/^fav:(add|rm|del):(\d+)$/, async (ctx) => {
 
 // کارت یک محصول توی لیست «علاقه‌مندی‌های من»
 async function sendFavoriteCard(ctx, product) {
+  recordRecentlyViewed(ctx.from.id, product.id); // بدون await تا نمایش کند نشه
+
   const price = formatPrice(getProductPrice(product, "hamkar"));
   const inStock = product.stock_status === "instock";
 
@@ -858,6 +868,103 @@ async function sendFavoriteCard(ctx, product) {
 // =====================================
 // دکمهٔ منو: ❤️ علاقه‌مندی‌های من
 // =====================================
+
+// نمایش یک محصول در لیست «اخیراً مشاهده‌شده‌ها»
+// (مثل محصولات جدید، ولی این‌جا خودش باعث ثبت بازدید جدید نمی‌شه
+// وگرنه هر بار که خود همین لیست باز می‌شه، ترتیبش به‌هم می‌ریخت)
+async function sendRecentlyViewedCard(ctx, product, favSet) {
+  const price = getProductPrice(product, "hamkar");
+  const priceText = formatPrice(price);
+
+  const inStock = product.stock_status === "instock";
+  const statusLabel = inStock ? "✅ موجود" : "❌ ناموجود";
+
+  const caption =
+    `👀 *${product.name}*\n\n` +
+    `${statusLabel}\n` +
+    `💰 قیمت: *${priceText} تومان*`;
+
+  const isFavorite = Boolean(favSet && favSet.has(Number(product.id)));
+  const favSpec = favoriteButtonSpec(product.id, isFavorite);
+
+  const rows = [[Markup.button.url("🛍 مشاهده در سایت", product.permalink)]];
+
+  if (inStock) {
+    rows.push([Markup.button.callback(favSpec.text, favSpec.data)]);
+  } else {
+    rows.push([Markup.button.callback("🙋 برام موجودش کن", `req:${product.id}`)]);
+  }
+
+  const extra = { parse_mode: "Markdown", ...Markup.inlineKeyboard(rows) };
+
+  const image = product.images?.length ? product.images[0].src : null;
+
+  if (image) {
+    try {
+      return await ctx.replyWithPhoto(image, { caption, ...extra });
+    } catch (err) {
+      console.error(
+        `⚠️ [RecentlyViewed] ارسال عکس محصول ${product.id} ناموفق بود؛ بدون عکس ارسال می‌شه:`,
+        err.message
+      );
+    }
+  }
+
+  return ctx.reply(caption, extra);
+}
+
+// =====================================
+// دکمهٔ منو: 👀 اخیراً مشاهده‌شده‌ها
+// =====================================
+
+bot.hears("👀 اخیراً مشاهده‌شده‌ها", async (ctx) => {
+  const telegramId = ctx.from.id;
+
+  searchMode.delete(telegramId);
+  orderTrackState.delete(telegramId);
+  stockCheckMode.delete(telegramId);
+
+  try {
+    const { status, ids } = await getRecentlyViewed(telegramId);
+
+    if (status !== "ok") {
+      return ctx.reply(
+        "❌ فعلاً امکان نمایش اخیراً مشاهده‌شده‌ها نیست. لطفاً کمی بعد دوباره تلاش کنید."
+      );
+    }
+
+    const emptyText =
+      "👀 هنوز محصولی مشاهده نکردید.\n\nهر محصولی که توی ربات ببینید، اینجا ذخیره می‌شه.";
+
+    if (!ids.length) {
+      return ctx.reply(emptyText);
+    }
+
+    const fetched = await getProductsByIds(ids);
+    const byId = new Map(fetched.map((p) => [Number(p.id), p]));
+
+    // ترتیب رو طبق ids (جدیدترین اول) نگه می‌داریم، نه ترتیب خروجی ووکامرس
+    const products = ids.map((id) => byId.get(id)).filter(Boolean);
+
+    if (!products.length) {
+      return ctx.reply(emptyText);
+    }
+
+    await ctx.reply(`👀 ${products.length} محصولی که اخیراً دیده‌اید:`);
+
+    const favSet = await getFavoriteIdSet(telegramId);
+
+    for (const product of products) {
+      await sendRecentlyViewedCard(ctx, product, favSet);
+      await sleep(80);
+    }
+  } catch (err) {
+    console.error("Recently Viewed Error:", err.message);
+    return ctx.reply(
+      "❌ خطا در دریافت اخیراً مشاهده‌شده‌ها. لطفاً دوباره تلاش کنید."
+    );
+  }
+});
 
 bot.hears("❤️ علاقه‌مندی‌های من", async (ctx) => {
   const telegramId = ctx.from.id;
@@ -989,6 +1096,8 @@ function askQuantity(ctx, state) {
 // =====================================
 
 async function sendOutOfStockProduct(ctx, product) {
+  recordRecentlyViewed(ctx.from.id, product.id); // بدون await تا نمایش کند نشه
+
   const price = getProductPrice(product, "hamkar");
   const priceText = formatPrice(price);
 
