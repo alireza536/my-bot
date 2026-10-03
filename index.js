@@ -1697,9 +1697,16 @@ bot.on("text", async (ctx, next) => {
     }
   }
 
-  // دسته‌بندی
+  // دسته‌بندی (و اگه متن با هیچ دسته‌بندی‌ای مطابقت نداشت، به‌جای
+  // نادیده گرفتنش، همون متن رو جستجو می‌کنیم — مثلاً وقتی محصولی
+  // دسته‌بندی نداره یا کاربر به‌جای زدن دکمهٔ دسته‌بندی، اسم محصول
+  // رو مستقیم تایپ کرده، مثل «aux»)
   try {
-    const products = await getProductsByCategory(text);
+    let products = await getProductsByCategory(text);
+
+    if (!products.length) {
+      products = await searchProducts(text);
+    }
 
     if (!products.length) return;
 
