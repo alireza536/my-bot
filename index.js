@@ -19,6 +19,7 @@ const {
   getOrderByIdAndPhone,
   getOrderStatusLabel,
   getSaleProducts,
+  getLatestProducts,
   getProductById,
   getProductsByIds,
 } = require("./woocommerce");
@@ -70,6 +71,7 @@ const MENU_BUTTONS = [
   "🛍 مشاهده محصولات",
   "🔍 جستجوی محصول",
   "🔥 پیشنهاد ویژه",
+  "🆕 محصولات جدید",
   "🙋 برام موجودش کن",
   "❤️ علاقه‌مندی‌های من",
   "📄 دریافت لیست کامل قیمت",
@@ -130,8 +132,9 @@ function showMainMenu(ctx) {
       parse_mode: "Markdown",
       ...Markup.keyboard([
         ["🛍 مشاهده محصولات", "🔍 جستجوی محصول"],
-        ["🔥 پیشنهاد ویژه", "🙋 برام موجودش کن"],
-        ["❤️ علاقه‌مندی‌های من", "📄 دریافت لیست کامل قیمت"],
+        ["🔥 پیشنهاد ویژه", "🆕 محصولات جدید"],
+        ["🙋 برام موجودش کن", "❤️ علاقه‌مندی‌های من"],
+        ["📄 دریافت لیست کامل قیمت"],
         ["🛒 سبد خرید", "📦 سفارش‌های من"],
         ["📞 پشتیبانی", "🔐 احراز هویت"],
         ["📱 ثبت شماره من"],
@@ -308,6 +311,75 @@ bot.hears("🔥 پیشنهاد ویژه", async (ctx) => {
   } catch (err) {
     console.error("Special Offer Error:", err.message);
     return ctx.reply("❌ خطا در دریافت پیشنهادهای ویژه.");
+  }
+});
+
+// =====================================
+// محصولات جدید (۱۰ تای آخر، تازه اضافه‌شده به سایت)
+// =====================================
+
+// نمایش یک محصول در لیست «محصولات جدید»
+// (عکس + نام + قیمت متناسب با کاربر + وضعیت موجودی + دکمهٔ مشاهده در سایت)
+async function sendLatestProduct(ctx, product, favSet) {
+  const price = getProductPrice(product, "hamkar");
+  const priceText = formatPrice(price);
+
+  const inStock = product.stock_status === "instock";
+  const statusLabel = inStock ? "✅ موجود" : "❌ ناموجود";
+
+  const caption =
+    `🆕 *${product.name}*\n\n` +
+    `${statusLabel}\n` +
+    `💰 قیمت: *${priceText} تومان*`;
+
+  const isFavorite = Boolean(favSet && favSet.has(Number(product.id)));
+  const favSpec = favoriteButtonSpec(product.id, isFavorite);
+
+  const rows = [[Markup.button.url("🛍 مشاهده در سایت", product.permalink)]];
+
+  if (inStock) {
+    rows.push([Markup.button.callback(favSpec.text, favSpec.data)]);
+  } else {
+    rows.push([Markup.button.callback("🙋 برام موجودش کن", `req:${product.id}`)]);
+  }
+
+  const extra = { parse_mode: "Markdown", ...Markup.inlineKeyboard(rows) };
+
+  const image = product.images?.length ? product.images[0].src : null;
+
+  if (image) {
+    try {
+      return await ctx.replyWithPhoto(image, { caption, ...extra });
+    } catch (err) {
+      console.error(
+        `⚠️ [LatestProducts] ارسال عکس محصول ${product.id} ناموفق بود؛ بدون عکس ارسال می‌شه:`,
+        err.message
+      );
+    }
+  }
+
+  return ctx.reply(caption, extra);
+}
+
+bot.hears("🆕 محصولات جدید", async (ctx) => {
+  try {
+    const products = await getLatestProducts({ includeOutOfStock: true });
+
+    if (!products.length) {
+      return ctx.reply("😕 فعلاً محصول جدیدی ثبت نشده.");
+    }
+
+    await ctx.reply(`🆕 ${products.length} محصول تازه به فروشگاه اضافه شده:`);
+
+    const favSet = await getFavoriteIdSet(ctx.from.id);
+
+    for (const product of products) {
+      await sendLatestProduct(ctx, product, favSet);
+      await sleep(80);
+    }
+  } catch (err) {
+    console.error("Latest Products Error:", err.message);
+    return ctx.reply("❌ خطا در دریافت محصولات جدید.");
   }
 });
 

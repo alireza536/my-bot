@@ -286,19 +286,27 @@ async function searchProducts(keyword) {
 // محصولات جدید
 // =====================================
 
-async function getLatestProducts() {
+// includeOutOfStock: true → ناموجودها هم (با برچسب ناموجود) توی لیست بیان
+async function getLatestProducts({ includeOutOfStock = false } = {}) {
   try {
-    const { data } = await api.get("/products", {
-      params: {
-        per_page: 10,
-        status: "publish",
-        stock_status: "instock",
-        orderby: "date",
-        order: "desc",
-      },
-    });
+    const params = {
+      per_page: 10,
+      status: "publish",
+      orderby: "date",
+      order: "desc",
+    };
 
-    return data.filter((p) => p.stock_status === "instock");
+    if (!includeOutOfStock) {
+      params.stock_status = "instock";
+    }
+
+    const { data } = await api.get("/products", { params });
+
+    return data.filter((p) => {
+      if (p.catalog_visibility === "hidden") return false;
+      if (!includeOutOfStock && p.stock_status !== "instock") return false;
+      return true;
+    });
   } catch (err) {
     console.error(
       "Latest Error:",
