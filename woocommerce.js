@@ -720,7 +720,11 @@ const HAMKAR_PRICE_KEYS = [
 ];
 
 function getProductPrice(product, role = "customer") {
-  let price = product.price;
+  // از regular_price استفاده می‌کنیم (نه product.price)، چون
+  // product.price قیمتِ نهاییِ بعد از تخفیفِ سایت (sale_price) هست؛
+  // می‌خوایم ربات همیشه قیمت بدون تخفیف رو نشون بده، حتی اگه روی
+  // سایت یه تخفیف موقت (مثلاً ۱۰٪ همگانی) فعال باشه.
+  let price = product.regular_price || product.price;
 
   if (role === "hamkar") {
     const hamkarPrice = getMeta(product, HAMKAR_PRICE_KEYS);
